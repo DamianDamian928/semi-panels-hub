@@ -69,6 +69,72 @@ type ConnectionCard = {
 }
 
 type ValidationState = 'Valid' | 'Warning' | 'Error' | 'Not checked'
+type ReviewIssueSeverity = 'High' | 'Medium' | 'Low'
+type ReviewIssueStatus = 'Open' | 'In review' | 'Resolved'
+type DecisionState = 'None' | 'Required' | 'Drafted' | 'Accepted' | 'Deferred'
+type ReviewIssueFilter = 'All' | 'Open' | 'Needs decision' | 'Resolved'
+type DecisionStatus = Exclude<DecisionState, 'None'>
+type DecisionFilter = 'All' | DecisionStatus
+type OutputStatus = 'Ready' | 'Blocked' | 'Needs decision' | 'Not persisted'
+type OutputFilter = 'All' | OutputStatus
+type AuditEventType = 'Issue' | 'Decision' | 'Output'
+type AuditEventState = 'Not persisted' | 'Preview only'
+
+type ReviewIssue = {
+  id: string
+  title: string
+  area: string
+  severity: ReviewIssueSeverity
+  status: ReviewIssueStatus
+  source: string
+  comparedWith: string
+  decision: DecisionState
+  owner: string
+  updated: string
+  description: string
+  suggestedAction: string
+}
+
+type DecisionRecord = {
+  issueId: string
+  issueTitle: string
+  area: string
+  status: DecisionStatus
+  proposedDecision: string
+  rationale: string
+  outputImpact: string
+  auditState: string
+  owner: string
+  updated: string
+  source: string
+  comparedWith: string
+}
+
+type OutputItem = {
+  id: string
+  title: string
+  area: string
+  linkedIssueId?: string
+  description: string
+  sourceBasis: string
+  outputImpact: string
+  artifactRole: string
+  auditState: string
+  owner: string
+  updated: string
+}
+
+type AuditEvent = {
+  id: string
+  type: AuditEventType
+  title: string
+  actor: string
+  timestamp: string
+  relatedTo: string
+  state: AuditEventState
+  summary: string
+  detail: string
+}
 
 const dashboardRows: DashboardRow[] = [
   {
@@ -147,6 +213,267 @@ const validationStatesBySource: Record<string, { state: ValidationState; message
   'Sharepoint documentation': { state: 'Not checked', message: 'Validation has not been run yet.' },
   'PLM SQL connection': { state: 'Valid', message: 'Connection test passed.' },
 }
+
+const reviewIssues: ReviewIssue[] = [
+  {
+    id: 'issue-001',
+    title: 'Missing component in L1 BOM',
+    area: 'BOM / L1',
+    severity: 'High',
+    status: 'Open',
+    source: 'Parts&BOM',
+    comparedWith: 'Fishbowl',
+    decision: 'Required',
+    owner: 'Damian',
+    updated: 'Today, 09:12',
+    description: 'Parts&BOM contains a component that is not present in the Fishbowl baseline for the selected L1 structure.',
+    suggestedAction: 'Review the L1 structure and decide whether the component should be added to the output or rejected as source noise.',
+  },
+  {
+    id: 'issue-002',
+    title: 'Quantity mismatch on MATVAR row',
+    area: 'BOM / MATVAR',
+    severity: 'Medium',
+    status: 'In review',
+    source: 'Fishbowl',
+    comparedWith: 'Parts&BOM',
+    decision: 'None',
+    owner: 'Damian',
+    updated: 'Today, 08:44',
+    description: 'The same material appears in both sources, but the quantity does not match the expected MATVAR setup.',
+    suggestedAction: 'Check which source should drive the quantity before creating a decision record.',
+  },
+  {
+    id: 'issue-003',
+    title: 'Documentation link missing for BOX package',
+    area: 'Documentation',
+    severity: 'High',
+    status: 'Open',
+    source: 'BOX documentation',
+    comparedWith: 'Sharepoint documentation',
+    decision: 'Required',
+    owner: 'Damian',
+    updated: 'Yesterday, 16:20',
+    description: 'BOX documentation has no matching SharePoint document reference for this package.',
+    suggestedAction: 'Confirm whether the missing link blocks review output or should be recorded as a documentation exception.',
+  },
+  {
+    id: 'issue-004',
+    title: 'Costing source ready but not reviewed',
+    area: 'Costing',
+    severity: 'Low',
+    status: 'Open',
+    source: 'Mass Production',
+    comparedWith: 'PLM SQL connection',
+    decision: 'None',
+    owner: 'Damian',
+    updated: 'May 5, 13:05',
+    description: 'Costing inputs are connected and available, but no review action has been taken yet.',
+    suggestedAction: 'Review costing inputs after BOM issues are triaged.',
+  },
+  {
+    id: 'issue-005',
+    title: 'Parent-child structure confirmed',
+    area: 'BOM / L2',
+    severity: 'Low',
+    status: 'Resolved',
+    source: 'Parts&BOM',
+    comparedWith: 'PLM SQL connection',
+    decision: 'Accepted',
+    owner: 'Damian',
+    updated: 'May 2, 10:30',
+    description: 'The parent-child structure was checked and marked as acceptable for this review pass.',
+    suggestedAction: 'Keep the accepted decision linked to the final output history.',
+  },
+]
+
+const decisionRecords: DecisionRecord[] = [
+  {
+    issueId: 'issue-001',
+    issueTitle: 'Missing component in L1 BOM',
+    area: 'BOM / L1',
+    status: 'Required',
+    proposedDecision: 'Decide whether the missing L1 component should be included in the final output.',
+    rationale: 'The difference affects the BOM structure and should not be resolved implicitly by the system.',
+    outputImpact: 'Blocks output',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'Today, 09:12',
+    source: 'Parts&BOM',
+    comparedWith: 'Fishbowl',
+  },
+  {
+    issueId: 'issue-002',
+    issueTitle: 'Quantity mismatch on MATVAR row',
+    area: 'BOM / MATVAR',
+    status: 'Drafted',
+    proposedDecision: 'Use Parts&BOM quantity as the review baseline for this MATVAR row.',
+    rationale: 'Parts&BOM is the intended source for this setup, but the final decision still needs confirmation.',
+    outputImpact: 'Affects output',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'Today, 08:44',
+    source: 'Fishbowl',
+    comparedWith: 'Parts&BOM',
+  },
+  {
+    issueId: 'issue-003',
+    issueTitle: 'Documentation link missing for BOX package',
+    area: 'Documentation',
+    status: 'Required',
+    proposedDecision: 'Confirm whether documentation gap can be carried as an exception.',
+    rationale: 'The issue belongs to documentation readiness and should be visible before output is generated.',
+    outputImpact: 'Documentation only',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'Yesterday, 16:20',
+    source: 'BOX documentation',
+    comparedWith: 'Sharepoint documentation',
+  },
+  {
+    issueId: 'issue-004',
+    issueTitle: 'Costing source ready but not reviewed',
+    area: 'Costing',
+    status: 'Deferred',
+    proposedDecision: 'Defer costing review until BOM issue triage is complete.',
+    rationale: 'Costing is available, but BOM structure decisions should be settled first.',
+    outputImpact: 'No output impact yet',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'May 5, 13:05',
+    source: 'Mass Production',
+    comparedWith: 'PLM SQL connection',
+  },
+  {
+    issueId: 'issue-005',
+    issueTitle: 'Parent-child structure confirmed',
+    area: 'BOM / L2',
+    status: 'Accepted',
+    proposedDecision: 'Keep the reviewed parent-child structure in the output baseline.',
+    rationale: 'The structure was checked and accepted for this review pass.',
+    outputImpact: 'Affects output',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'May 2, 10:30',
+    source: 'Parts&BOM',
+    comparedWith: 'PLM SQL connection',
+  },
+]
+
+const outputItems: OutputItem[] = [
+  {
+    id: 'output-l1-bom',
+    title: 'L1 BOM update package',
+    area: 'BOM / L1',
+    linkedIssueId: 'issue-001',
+    description: 'Prepared output candidate for the L1 BOM structure after the missing component issue is resolved.',
+    sourceBasis: 'Parts&BOM vs Fishbowl',
+    outputImpact: 'Blocks output',
+    artifactRole: 'BOM package',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'Today, 09:18',
+  },
+  {
+    id: 'output-matvar-quantity',
+    title: 'MATVAR quantity review output',
+    area: 'BOM / MATVAR',
+    linkedIssueId: 'issue-002',
+    description: 'Output candidate for MATVAR quantity alignment, waiting for the decision to be accepted.',
+    sourceBasis: 'Fishbowl vs Parts&BOM',
+    outputImpact: 'Affects output',
+    artifactRole: 'Quantity update',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'Today, 08:50',
+  },
+  {
+    id: 'output-documentation-exception',
+    title: 'Documentation exception note',
+    area: 'Documentation',
+    linkedIssueId: 'issue-003',
+    description: 'Documentation output note that can only be included after the missing link decision is settled.',
+    sourceBasis: 'BOX documentation vs Sharepoint documentation',
+    outputImpact: 'Documentation only',
+    artifactRole: 'Exception note',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'Yesterday, 16:28',
+  },
+  {
+    id: 'output-costing-hold',
+    title: 'Costing readiness hold',
+    area: 'Costing',
+    linkedIssueId: 'issue-004',
+    description: 'Costing output remains on hold until BOM decisions are clear enough to support final output.',
+    sourceBasis: 'Mass Production vs PLM SQL connection',
+    outputImpact: 'No output impact yet',
+    artifactRole: 'Readiness note',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'May 5, 13:10',
+  },
+  {
+    id: 'output-l2-structure',
+    title: 'L2 structure baseline',
+    area: 'BOM / L2',
+    linkedIssueId: 'issue-005',
+    description: 'Accepted parent-child structure that is ready to be represented in the final output baseline.',
+    sourceBasis: 'Parts&BOM vs PLM SQL connection',
+    outputImpact: 'Affects output',
+    artifactRole: 'BOM baseline',
+    auditState: 'Not persisted',
+    owner: 'Damian',
+    updated: 'May 2, 10:34',
+  },
+]
+
+const auditEvents: AuditEvent[] = [
+  {
+    id: 'audit-001',
+    type: 'Issue',
+    title: 'Issue marked for decision',
+    actor: 'Damian',
+    timestamp: 'Today, 09:15',
+    relatedTo: 'Missing component in L1 BOM',
+    state: 'Preview only',
+    summary: 'The L1 BOM issue was marked as requiring a decision.',
+    detail: 'This preview event represents the future audit trail for moving an issue from review triage into the decision workflow.',
+  },
+  {
+    id: 'audit-002',
+    type: 'Decision',
+    title: 'Decision drafted',
+    actor: 'Damian',
+    timestamp: 'Today, 09:20',
+    relatedTo: 'Quantity mismatch on MATVAR row',
+    state: 'Preview only',
+    summary: 'A draft decision was prepared for the MATVAR quantity mismatch.',
+    detail: 'This will later become a persisted decision-history event with author, timestamp and before/after state.',
+  },
+  {
+    id: 'audit-003',
+    type: 'Decision',
+    title: 'Decision accepted',
+    actor: 'Damian',
+    timestamp: 'May 2, 10:32',
+    relatedTo: 'Parent-child structure confirmed',
+    state: 'Preview only',
+    summary: 'The parent-child structure decision was accepted for output readiness.',
+    detail: 'Accepted decisions should later explain why an output item is considered ready.',
+  },
+  {
+    id: 'audit-004',
+    type: 'Output',
+    title: 'Output prepared',
+    actor: 'Damian',
+    timestamp: 'Today, 09:25',
+    relatedTo: 'L2 structure baseline',
+    state: 'Not persisted',
+    summary: 'An output candidate was prepared from an accepted decision.',
+    detail: 'This preview keeps output as a separate artifact while signaling that no durable audit record exists yet.',
+  },
+]
 
 const validationStateClassName: Record<ValidationState, string> = {
   Valid: 'status status-completed',
@@ -634,6 +961,24 @@ const activeStepByStatus: Record<ReviewStatus, ProcessStep> = {
   Completed: 'Output',
 }
 
+const resolveDecisionStatus = (
+  record: DecisionRecord,
+  issueDecisionStates: Record<string, DecisionState>,
+  decisionStatuses: Record<string, DecisionStatus>,
+): DecisionStatus => {
+  const issueDecisionState = issueDecisionStates[record.issueId]
+  const issueDrivenStatus = issueDecisionState && issueDecisionState !== 'None' ? issueDecisionState : record.status
+
+  return decisionStatuses[record.issueId] ?? issueDrivenStatus
+}
+
+const getOutputStatusFromDecision = (decisionStatus?: DecisionStatus): OutputStatus => {
+  if (decisionStatus === 'Accepted') return 'Ready'
+  if (decisionStatus === 'Deferred') return 'Blocked'
+  if (decisionStatus) return 'Needs decision'
+  return 'Not persisted'
+}
+
 export default function App() {
   const [isAdmin] = useState(true)
   const [appView, setAppView] = useState<AppView>('dashboard')
@@ -642,6 +987,16 @@ export default function App() {
   const [activeBomStage, setActiveBomStage] = useState<BomStage>('MATVAR')
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStep>('Main')
   const [activeConnectionNodeId, setActiveConnectionNodeId] = useState<string>('matvar')
+  const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0].id)
+  const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
+  const [issueDecisionStates, setIssueDecisionStates] = useState<Record<string, DecisionState>>({})
+  const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0].issueId)
+  const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
+  const [decisionStatuses, setDecisionStatuses] = useState<Record<string, DecisionStatus>>({})
+  const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0].id)
+  const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
+  const [outputStatuses, setOutputStatuses] = useState<Record<string, OutputStatus>>({})
+  const [activeAuditEventId, setActiveAuditEventId] = useState<string>(auditEvents[0].id)
 
   const selectedReview = useMemo(
     () => dashboardRows.find((row) => row.id === selectedReviewId) ?? null,
@@ -878,6 +1233,641 @@ export default function App() {
           </div>
         </aside>
       </section>
+    )
+  }
+
+  const renderReviewStep = () => {
+    const issueRows = reviewIssues.map((issue) => ({
+      ...issue,
+      decision: issueDecisionStates[issue.id] ?? issue.decision,
+    }))
+
+    const filteredIssues = issueRows.filter((issue) => {
+      if (reviewIssueFilter === 'Open') return issue.status !== 'Resolved'
+      if (reviewIssueFilter === 'Needs decision') return issue.decision === 'Required'
+      if (reviewIssueFilter === 'Resolved') return issue.status === 'Resolved'
+      return true
+    })
+
+    const selectedIssue =
+      filteredIssues.find((issue) => issue.id === activeReviewIssueId) ??
+      filteredIssues[0] ??
+      issueRows.find((issue) => issue.id === activeReviewIssueId) ??
+      issueRows[0]
+
+    const summary = issueRows.reduce(
+      (acc, issue) => {
+        if (issue.status !== 'Resolved') acc.open += 1
+        if (issue.decision === 'Required') acc.needsDecision += 1
+        if (issue.severity === 'High' && issue.status !== 'Resolved') acc.highSeverity += 1
+        if (issue.status === 'Resolved') acc.resolved += 1
+        return acc
+      },
+      { open: 0, needsDecision: 0, highSeverity: 0, resolved: 0 },
+    )
+
+    const filterOptions: ReviewIssueFilter[] = ['All', 'Open', 'Needs decision', 'Resolved']
+    const selectedDecision = selectedIssue.decision
+
+    const markForDecision = () => {
+      setIssueDecisionStates((current) => ({
+        ...current,
+        [selectedIssue.id]: 'Required',
+      }))
+    }
+
+    return (
+      <section className="review-workspace-grid">
+        <section className="workspace-main card review-workspace-main">
+          <div className="review-workspace-header">
+            <div>
+              <p className="section-label">Review</p>
+              <h3>Review workspace</h3>
+              <p>Central place for issue triage before decisions are created as separate records.</p>
+            </div>
+            <div className="review-workspace-context">
+              <span className="meta-chip">Review: {selectedReview?.intelModel}</span>
+              <span className="meta-chip">Issues: {issueRows.length}</span>
+            </div>
+          </div>
+
+          <div className="review-stat-grid" aria-label="Review issue summary">
+            <article className="review-stat-card">
+              <span>Open issues</span>
+              <strong>{summary.open}</strong>
+            </article>
+            <article className="review-stat-card">
+              <span>Needs decision</span>
+              <strong>{summary.needsDecision}</strong>
+            </article>
+            <article className="review-stat-card">
+              <span>High severity</span>
+              <strong>{summary.highSeverity}</strong>
+            </article>
+            <article className="review-stat-card">
+              <span>Resolved</span>
+              <strong>{summary.resolved}</strong>
+            </article>
+          </div>
+
+          <div className="review-filter-row" aria-label="Issue filters">
+            {filterOptions.map((filter) => {
+              const isActive = filter === reviewIssueFilter
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  className={`review-filter-button ${isActive ? 'review-filter-button-active' : ''}`}
+                  onClick={() => setReviewIssueFilter(filter)}
+                  aria-pressed={isActive}
+                >
+                  {filter}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="review-issue-list" aria-label="Review issues">
+            {filteredIssues.map((issue) => {
+              const isActive = issue.id === selectedIssue.id
+              return (
+                <button
+                  key={issue.id}
+                  type="button"
+                  className={`review-issue-row ${isActive ? 'review-issue-row-active' : ''}`}
+                  onClick={() => setActiveReviewIssueId(issue.id)}
+                >
+                  <span className={`review-severity review-severity-${issue.severity.toLowerCase()}`}>{issue.severity}</span>
+                  <span className="review-issue-main">
+                    <strong>{issue.title}</strong>
+                    <span>{issue.area} | {issue.source} vs {issue.comparedWith}</span>
+                  </span>
+                  <span className="review-issue-meta">
+                    <span>{issue.status}</span>
+                    <span>Decision: {issue.decision}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <aside className="workspace-side-panel card review-detail-panel" aria-label="Selected issue details">
+          <div className="sidebar-header">
+            <p className="section-label">Selected issue</p>
+            <h2>{selectedIssue.title}</h2>
+            <p>{selectedIssue.description}</p>
+          </div>
+
+          <dl className="source-meta-list">
+            <div>
+              <dt>Area</dt>
+              <dd>{selectedIssue.area}</dd>
+            </div>
+            <div>
+              <dt>Severity</dt>
+              <dd>{selectedIssue.severity}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{selectedIssue.status}</dd>
+            </div>
+            <div>
+              <dt>Sources</dt>
+              <dd>{selectedIssue.source} vs {selectedIssue.comparedWith}</dd>
+            </div>
+            <div>
+              <dt>Decision</dt>
+              <dd>{selectedDecision}</dd>
+            </div>
+          </dl>
+
+          <section className="decision-readiness" aria-label="Decision readiness">
+            <p className="section-label">Decision readiness</p>
+            <h3>{selectedDecision === 'Required' ? 'Ready for decision' : 'Not marked yet'}</h3>
+            <p>{selectedIssue.suggestedAction}</p>
+          </section>
+
+          <div className="review-detail-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={markForDecision}
+              disabled={selectedDecision === 'Required'}
+            >
+              Mark for decision
+            </button>
+            <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Decisions')}>
+              Go to Decisions
+            </button>
+          </div>
+        </aside>
+      </section>
+    )
+  }
+
+  const renderDecisionsStep = () => {
+    const decisionRows = decisionRecords.map((record) => ({
+      ...record,
+      status: resolveDecisionStatus(record, issueDecisionStates, decisionStatuses),
+    }))
+
+    const filteredDecisions = decisionRows.filter((record) => {
+      if (decisionFilter === 'All') return true
+      return record.status === decisionFilter
+    })
+
+    const selectedDecision =
+      filteredDecisions.find((record) => record.issueId === activeDecisionIssueId) ??
+      filteredDecisions[0] ??
+      decisionRows.find((record) => record.issueId === activeDecisionIssueId) ??
+      decisionRows[0]
+
+    const summary = decisionRows.reduce(
+      (acc, record) => {
+        acc[record.status] += 1
+        return acc
+      },
+      { Required: 0, Drafted: 0, Accepted: 0, Deferred: 0 } as Record<DecisionStatus, number>,
+    )
+
+    const filterOptions: DecisionFilter[] = ['All', 'Required', 'Drafted', 'Accepted', 'Deferred']
+
+    const setDecisionStatus = (status: DecisionStatus) => {
+      setDecisionStatuses((current) => ({
+        ...current,
+        [selectedDecision.issueId]: status,
+      }))
+      setIssueDecisionStates((current) => ({
+        ...current,
+        [selectedDecision.issueId]: status,
+      }))
+    }
+
+    return (
+      <section className="decision-workspace-grid">
+        <section className="workspace-main card decision-workspace-main">
+          <div className="decision-workspace-header">
+            <div>
+              <p className="section-label">Decisions</p>
+              <h3>Decision workspace</h3>
+              <p>Separate decision records linked to review issues, kept apart from source data and issue detection.</p>
+            </div>
+            <div className="decision-workspace-context">
+              <span className="meta-chip">Review: {selectedReview?.intelModel}</span>
+              <span className="meta-chip">Decisions: {decisionRows.length}</span>
+            </div>
+          </div>
+
+          <div className="decision-stat-grid" aria-label="Decision summary">
+            <article className="decision-stat-card">
+              <span>Required</span>
+              <strong>{summary.Required}</strong>
+            </article>
+            <article className="decision-stat-card">
+              <span>Drafted</span>
+              <strong>{summary.Drafted}</strong>
+            </article>
+            <article className="decision-stat-card">
+              <span>Accepted</span>
+              <strong>{summary.Accepted}</strong>
+            </article>
+            <article className="decision-stat-card">
+              <span>Deferred</span>
+              <strong>{summary.Deferred}</strong>
+            </article>
+          </div>
+
+          <div className="decision-filter-row" aria-label="Decision filters">
+            {filterOptions.map((filter) => {
+              const isActive = filter === decisionFilter
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  className={`decision-filter-button ${isActive ? 'decision-filter-button-active' : ''}`}
+                  onClick={() => setDecisionFilter(filter)}
+                  aria-pressed={isActive}
+                >
+                  {filter}
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="decision-list" aria-label="Decision records">
+            {filteredDecisions.map((record) => {
+              const isActive = record.issueId === selectedDecision.issueId
+              return (
+                <button
+                  key={record.issueId}
+                  type="button"
+                  className={`decision-row ${isActive ? 'decision-row-active' : ''}`}
+                  onClick={() => setActiveDecisionIssueId(record.issueId)}
+                >
+                  <span className={`decision-status decision-status-${record.status.toLowerCase()}`}>{record.status}</span>
+                  <span className="decision-row-main">
+                    <strong>{record.issueTitle}</strong>
+                    <span>{record.area} | {record.source} vs {record.comparedWith}</span>
+                  </span>
+                  <span className="decision-row-meta">
+                    <span>{record.owner}</span>
+                    <span>{record.updated}</span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <aside className="workspace-side-panel card decision-detail-panel" aria-label="Selected decision details">
+          <div className="sidebar-header">
+            <p className="section-label">Selected decision</p>
+            <h2>{selectedDecision.issueTitle}</h2>
+            <p>{selectedDecision.proposedDecision}</p>
+          </div>
+
+          <section className="decision-detail-block">
+            <p className="section-label">Decision rationale</p>
+            <p>{selectedDecision.rationale}</p>
+          </section>
+
+          <dl className="source-meta-list">
+            <div>
+              <dt>Linked issue</dt>
+              <dd>{selectedDecision.issueTitle}</dd>
+            </div>
+            <div>
+              <dt>Decision status</dt>
+              <dd>{selectedDecision.status}</dd>
+            </div>
+            <div>
+              <dt>Output impact</dt>
+              <dd>{selectedDecision.outputImpact}</dd>
+            </div>
+            <div>
+              <dt>Audit state</dt>
+              <dd>{selectedDecision.auditState}</dd>
+            </div>
+          </dl>
+
+          <div className="decision-detail-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setDecisionStatus('Drafted')}
+              disabled={selectedDecision.status === 'Drafted' || selectedDecision.status === 'Accepted'}
+            >
+              Set as drafted
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setDecisionStatus('Accepted')}
+              disabled={selectedDecision.status === 'Accepted'}
+            >
+              Accept decision
+            </button>
+            <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Review')}>
+              Back to Review
+            </button>
+          </div>
+        </aside>
+      </section>
+    )
+  }
+
+  const renderOutputStep = () => {
+    const decisionRows = decisionRecords.map((record) => ({
+      ...record,
+      status: resolveDecisionStatus(record, issueDecisionStates, decisionStatuses),
+    }))
+
+    const outputRows = outputItems.map((item) => {
+      const linkedDecision = item.linkedIssueId
+        ? decisionRows.find((record) => record.issueId === item.linkedIssueId)
+        : undefined
+
+      const derivedStatus = getOutputStatusFromDecision(linkedDecision?.status)
+
+      return {
+        ...item,
+        linkedDecision,
+        status: outputStatuses[item.id] ?? derivedStatus,
+      }
+    })
+
+    const filteredOutputItems = outputRows.filter((item) => {
+      if (outputFilter === 'All') return true
+      if (outputFilter === 'Not persisted') return item.auditState === 'Not persisted'
+      return item.status === outputFilter
+    })
+
+    const selectedOutputItem =
+      filteredOutputItems.find((item) => item.id === activeOutputItemId) ??
+      filteredOutputItems[0] ??
+      outputRows.find((item) => item.id === activeOutputItemId) ??
+      outputRows[0]
+
+    const summary = outputRows.reduce(
+      (acc, item) => {
+        if (item.status === 'Ready') acc.ready += 1
+        if (item.status === 'Blocked') acc.blocked += 1
+        if (item.linkedDecision) acc.decisionLinked += 1
+        if (item.auditState === 'Not persisted') acc.notPersisted += 1
+        return acc
+      },
+      { ready: 0, blocked: 0, decisionLinked: 0, notPersisted: 0 },
+    )
+
+    const filterOptions: OutputFilter[] = ['All', 'Ready', 'Blocked', 'Needs decision', 'Not persisted']
+    const linkedDecisionLabel = selectedOutputItem.linkedDecision
+      ? `${selectedOutputItem.linkedDecision.issueTitle} (${selectedOutputItem.linkedDecision.status})`
+      : 'No accepted decision'
+    const canPrepareOutput = selectedOutputItem.linkedDecision?.status === 'Accepted'
+    const readinessText =
+      selectedOutputItem.status === 'Ready'
+        ? 'Ready to include in the output artifact.'
+        : selectedOutputItem.status === 'Blocked'
+          ? 'Blocked from output until the decision changes.'
+          : selectedOutputItem.status === 'Needs decision'
+            ? 'Waiting for an accepted decision before output can be prepared.'
+            : 'Output item is not persisted and has no settled decision basis yet.'
+    const selectedAuditEvent =
+      auditEvents.find((event) => event.id === activeAuditEventId) ??
+      auditEvents[0]
+    const auditSummary = auditEvents.reduce(
+      (acc, event) => {
+        acc.events += 1
+        if (event.state === 'Not persisted') acc.notPersisted += 1
+        if (event.type === 'Decision') acc.decisionChanges += 1
+        if (event.type === 'Output') acc.outputChanges += 1
+        return acc
+      },
+      { events: 0, notPersisted: 0, decisionChanges: 0, outputChanges: 0 },
+    )
+
+    const prepareOutput = () => {
+      if (!canPrepareOutput) return
+
+      setOutputStatuses((current) => ({
+        ...current,
+        [selectedOutputItem.id]: 'Ready',
+      }))
+    }
+
+    return (
+      <>
+        <section className="output-workspace-grid">
+          <section className="workspace-main card output-workspace-main">
+            <div className="output-workspace-header">
+              <div>
+                <p className="section-label">Output</p>
+                <h3>Output workspace</h3>
+                <p>Readiness view for artifacts that can be produced from the current review and decision state.</p>
+              </div>
+            <div className="output-workspace-context">
+              <span className="meta-chip">Review: {selectedReview?.intelModel}</span>
+              <span className="meta-chip">Output items: {outputRows.length}</span>
+            </div>
+          </div>
+
+          <div className="output-stat-grid" aria-label="Output readiness summary">
+            <article className="output-stat-card">
+              <span>Ready items</span>
+              <strong>{summary.ready}</strong>
+              </article>
+              <article className="output-stat-card">
+                <span>Blocked</span>
+                <strong>{summary.blocked}</strong>
+              </article>
+              <article className="output-stat-card">
+                <span>Decision-linked</span>
+                <strong>{summary.decisionLinked}</strong>
+              </article>
+              <article className="output-stat-card">
+                <span>Not persisted</span>
+                <strong>{summary.notPersisted}</strong>
+              </article>
+            </div>
+
+            <div className="output-filter-row" aria-label="Output filters">
+              {filterOptions.map((filter) => {
+                const isActive = filter === outputFilter
+                return (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={`output-filter-button ${isActive ? 'output-filter-button-active' : ''}`}
+                    onClick={() => setOutputFilter(filter)}
+                    aria-pressed={isActive}
+                  >
+                    {filter}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="output-list" aria-label="Output items">
+              {filteredOutputItems.map((item) => {
+                const isActive = item.id === selectedOutputItem.id
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`output-row ${isActive ? 'output-row-active' : ''}`}
+                    onClick={() => setActiveOutputItemId(item.id)}
+                  >
+                    <span className={`output-status output-status-${item.status.toLowerCase().replace(/\s+/g, '-')}`}>{item.status}</span>
+                    <span className="output-row-main">
+                      <strong>{item.title}</strong>
+                      <span>{item.area} | {item.artifactRole}</span>
+                    </span>
+                    <span className="output-row-meta">
+                      <span>{item.outputImpact}</span>
+                      <span>{item.owner}</span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
+
+          <aside className="workspace-side-panel card output-detail-panel" aria-label="Selected output item details">
+            <div className="sidebar-header">
+              <p className="section-label">Selected output</p>
+              <h2>{selectedOutputItem.title}</h2>
+              <p>{selectedOutputItem.description}</p>
+            </div>
+
+            <section className="output-readiness" aria-label="Output readiness">
+              <p className="section-label">Output readiness</p>
+              <h3>{selectedOutputItem.status}</h3>
+              <p>{readinessText}</p>
+            </section>
+
+            <dl className="source-meta-list">
+              <div>
+                <dt>Linked decision</dt>
+                <dd>{linkedDecisionLabel}</dd>
+              </div>
+              <div>
+                <dt>Output status</dt>
+                <dd>{selectedOutputItem.status}</dd>
+              </div>
+              <div>
+                <dt>Source basis</dt>
+                <dd>{selectedOutputItem.sourceBasis}</dd>
+              </div>
+              <div>
+                <dt>Readiness</dt>
+                <dd>{readinessText}</dd>
+              </div>
+              <div>
+                <dt>Audit state</dt>
+                <dd>{selectedOutputItem.auditState}</dd>
+              </div>
+            </dl>
+
+            <div className="output-detail-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={prepareOutput}
+                disabled={selectedOutputItem.status === 'Ready' || !canPrepareOutput}
+              >
+                Prepare output
+              </button>
+              <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Decisions')}>
+                Back to Decisions
+              </button>
+            </div>
+          </aside>
+        </section>
+
+        <section className="card audit-preview" aria-label="History and audit preview">
+          <div className="audit-preview-header">
+            <div>
+              <p className="section-label">History / Audit</p>
+              <h3>Audit preview</h3>
+              <p>This preview shows the kind of trace the workflow will need once persistence is added.</p>
+            </div>
+            <div className="audit-preview-context">
+              <span className="meta-chip">Events: {auditSummary.events}</span>
+              <span className="meta-chip">Mode: Preview only</span>
+            </div>
+          </div>
+
+          <div className="audit-stat-grid" aria-label="Audit preview summary">
+            <article className="audit-stat-card">
+              <span>Events</span>
+              <strong>{auditSummary.events}</strong>
+            </article>
+            <article className="audit-stat-card">
+              <span>Not persisted</span>
+              <strong>{auditSummary.notPersisted}</strong>
+            </article>
+            <article className="audit-stat-card">
+              <span>Decision changes</span>
+              <strong>{auditSummary.decisionChanges}</strong>
+            </article>
+            <article className="audit-stat-card">
+              <span>Output changes</span>
+              <strong>{auditSummary.outputChanges}</strong>
+            </article>
+          </div>
+
+          <div className="audit-preview-grid">
+            <div className="audit-event-list" aria-label="Audit events">
+              {auditEvents.map((event) => {
+                const isActive = event.id === selectedAuditEvent.id
+                return (
+                  <button
+                    key={event.id}
+                    type="button"
+                    className={`audit-event-row ${isActive ? 'audit-event-row-active' : ''}`}
+                    onClick={() => setActiveAuditEventId(event.id)}
+                  >
+                    <span className={`audit-event-type audit-event-type-${event.type.toLowerCase()}`}>{event.type}</span>
+                    <span className="audit-event-main">
+                      <strong>{event.title}</strong>
+                      <span>{event.relatedTo}</span>
+                    </span>
+                    <span className="audit-event-meta">
+                      <span>{event.actor}</span>
+                      <span>{event.timestamp}</span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <aside className="audit-event-detail" aria-label="Selected audit event detail">
+              <p className="section-label">Selected event</p>
+              <h3>{selectedAuditEvent.title}</h3>
+              <p>{selectedAuditEvent.summary}</p>
+              <dl className="source-meta-list">
+                <div>
+                  <dt>Related to</dt>
+                  <dd>{selectedAuditEvent.relatedTo}</dd>
+                </div>
+                <div>
+                  <dt>Actor</dt>
+                  <dd>{selectedAuditEvent.actor}</dd>
+                </div>
+                <div>
+                  <dt>State</dt>
+                  <dd>{selectedAuditEvent.state}</dd>
+                </div>
+                <div>
+                  <dt>Detail</dt>
+                  <dd>{selectedAuditEvent.detail}</dd>
+                </div>
+              </dl>
+            </aside>
+          </div>
+        </section>
+      </>
     )
   }
 
@@ -1377,11 +2367,11 @@ export default function App() {
           ) : currentProcessStep === 'Comparison' ? (
             renderComparisonStep()
           ) : currentProcessStep === 'Review' ? (
-            renderSourceNamesStep('Review', 'Ekran review', 'Ten etap będzie głównym workspace do analizy issue i problemów wykrytych przez system.', 'Oczekuje')
+            renderReviewStep()
           ) : currentProcessStep === 'Decisions' ? (
-            renderSourceNamesStep('Decisions', 'Ekran decyzji', 'Ten etap będzie zapisywać decyzje użytkownika oddzielnie od issue i danych źródłowych.', 'Oczekuje')
+            renderDecisionsStep()
           ) : (
-            renderSourceNamesStep('Output', 'Ekran outputu', 'Ten etap będzie pokazywać finalne wyniki, eksporty i historię review.', 'Oczekuje')
+            renderOutputStep()
           )}
 
           <section className="stage-purpose-card card" aria-label="Step purpose">
