@@ -79,6 +79,7 @@ type OutputStatus = 'Ready' | 'Blocked' | 'Needs decision' | 'Not persisted'
 type OutputFilter = 'All' | OutputStatus
 type AuditEventType = 'Issue' | 'Decision' | 'Output'
 type AuditEventState = 'Not persisted' | 'Preview only'
+type PersistenceState = 'Source snapshot' | 'Pending save' | 'Saved' | 'Save failed' | 'Audit recorded'
 
 type ReviewIssue = {
   id: string
@@ -132,6 +133,7 @@ type AuditEvent = {
   timestamp: string
   relatedTo: string
   state: AuditEventState
+  persistence: PersistenceState
   summary: string
   detail: string
 }
@@ -437,6 +439,7 @@ const auditEvents: AuditEvent[] = [
     timestamp: 'Today, 09:15',
     relatedTo: 'Missing component in L1 BOM',
     state: 'Preview only',
+    persistence: 'Source snapshot',
     summary: 'The L1 BOM issue was marked as requiring a decision.',
     detail: 'This preview event represents the future audit trail for moving an issue from review triage into the decision workflow.',
   },
@@ -448,6 +451,7 @@ const auditEvents: AuditEvent[] = [
     timestamp: 'Today, 09:20',
     relatedTo: 'Quantity mismatch on MATVAR row',
     state: 'Preview only',
+    persistence: 'Source snapshot',
     summary: 'A draft decision was prepared for the MATVAR quantity mismatch.',
     detail: 'This will later become a persisted decision-history event with author, timestamp and before/after state.',
   },
@@ -459,6 +463,7 @@ const auditEvents: AuditEvent[] = [
     timestamp: 'May 2, 10:32',
     relatedTo: 'Parent-child structure confirmed',
     state: 'Preview only',
+    persistence: 'Source snapshot',
     summary: 'The parent-child structure decision was accepted for output readiness.',
     detail: 'Accepted decisions should later explain why an output item is considered ready.',
   },
@@ -470,6 +475,7 @@ const auditEvents: AuditEvent[] = [
     timestamp: 'Today, 09:25',
     relatedTo: 'L2 structure baseline',
     state: 'Not persisted',
+    persistence: 'Source snapshot',
     summary: 'An output candidate was prepared from an accepted decision.',
     detail: 'This preview keeps output as a separate artifact while signaling that no durable audit record exists yet.',
   },
@@ -979,6 +985,18 @@ const getOutputStatusFromDecision = (decisionStatus?: DecisionStatus): OutputSta
   return 'Not persisted'
 }
 
+const defaultPersistenceState: PersistenceState = 'Source snapshot'
+
+const persistenceStateDescription: Record<PersistenceState, string> = {
+  'Source snapshot': 'Loaded from the current review snapshot.',
+  'Pending save': 'Waiting for future backend save and audit confirmation.',
+  Saved: 'Saved by the backend.',
+  'Save failed': 'Backend save failed and needs retry.',
+  'Audit recorded': 'Saved with a confirmed audit trail event.',
+}
+
+const getStateToken = (value: string) => value.toLowerCase().replace(/\s+/g, '-')
+
 export default function App() {
   const [isAdmin] = useState(true)
   const [appView, setAppView] = useState<AppView>('dashboard')
@@ -990,18 +1008,36 @@ export default function App() {
   const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0].id)
   const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
   const [issueDecisionStates, setIssueDecisionStates] = useState<Record<string, DecisionState>>({})
+  const [issuePersistenceStates, setIssuePersistenceStates] = useState<Record<string, PersistenceState>>({})
   const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0].issueId)
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
   const [decisionStatuses, setDecisionStatuses] = useState<Record<string, DecisionStatus>>({})
+  const [decisionPersistenceStates, setDecisionPersistenceStates] = useState<Record<string, PersistenceState>>({})
   const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0].id)
   const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
   const [outputStatuses, setOutputStatuses] = useState<Record<string, OutputStatus>>({})
+  const [outputPersistenceStates, setOutputPersistenceStates] = useState<Record<string, PersistenceState>>({})
   const [activeAuditEventId, setActiveAuditEventId] = useState<string>(auditEvents[0].id)
+  const [localAuditEvents, setLocalAuditEvents] = useState<AuditEvent[]>([])
 
   const selectedReview = useMemo(
     () => dashboardRows.find((row) => row.id === selectedReviewId) ?? null,
     [selectedReviewId],
   )
+
+  const addAuditEvent = (event: Omit<AuditEvent, 'id' | 'actor' | 'timestamp' | 'state' | 'persistence'>) => {
+    const nextEvent: AuditEvent = {
+      ...event,
+      id: `audit-local-${Date.now()}`,
+      actor: selectedReview?.owner ?? 'Damian',
+      timestamp: 'Just now',
+      state: 'Not persisted',
+      persistence: 'Pending save',
+    }
+
+    setLocalAuditEvents((current) => [nextEvent, ...current])
+    setActiveAuditEventId(nextEvent.id)
+  }
 
 
   const connectionsCustomStyles = `
@@ -1239,7 +1275,12 @@ export default function App() {
   const renderReviewStep = () => {
     const issueRows = reviewIssues.map((issue) => ({
       ...issue,
-      decision: issueDecisionStates[issue.id] ?? issue.decision,
+      decision:
+        issueDecisionStates[issue.id] ??
+        decisionStatuses[issue.id] ??
+        (issue.decision !== 'None'
+          ? issue.decision
+          : decisionRecords.find((record) => record.issueId === issue.id)?.status ?? issue.decision),
     }))
 
     const filteredIssues = issueRows.filter((issue) => {
@@ -1251,9 +1292,7 @@ export default function App() {
 
     const selectedIssue =
       filteredIssues.find((issue) => issue.id === activeReviewIssueId) ??
-      filteredIssues[0] ??
-      issueRows.find((issue) => issue.id === activeReviewIssueId) ??
-      issueRows[0]
+      filteredIssues[0]
 
     const summary = issueRows.reduce(
       (acc, issue) => {
@@ -1267,13 +1306,45 @@ export default function App() {
     )
 
     const filterOptions: ReviewIssueFilter[] = ['All', 'Open', 'Needs decision', 'Resolved']
-    const selectedDecision = selectedIssue.decision
+    const selectedDecision = selectedIssue?.decision ?? 'None'
+    const selectedIssuePersistence = selectedIssue
+      ? issuePersistenceStates[selectedIssue.id] ?? decisionPersistenceStates[selectedIssue.id] ?? defaultPersistenceState
+      : defaultPersistenceState
+    const decisionReadinessTitle =
+      selectedDecision === 'Required'
+        ? 'Ready for decision'
+        : selectedDecision === 'None'
+          ? 'Not marked yet'
+          : 'Decision already linked'
 
     const markForDecision = () => {
+      if (!selectedIssue) return
+
       setIssueDecisionStates((current) => ({
         ...current,
         [selectedIssue.id]: 'Required',
       }))
+      setIssuePersistenceStates((current) => ({
+        ...current,
+        [selectedIssue.id]: 'Pending save',
+      }))
+      setActiveDecisionIssueId(selectedIssue.id)
+      setDecisionFilter('All')
+      addAuditEvent({
+        type: 'Issue',
+        title: 'Issue marked for decision',
+        relatedTo: selectedIssue.title,
+        summary: `${selectedIssue.title} was marked as requiring a decision.`,
+        detail: 'Local audit event created from Review. This records the triage action before persistence exists.',
+      })
+    }
+
+    const goToDecisions = () => {
+      if (!selectedIssue) return
+
+      setActiveDecisionIssueId(selectedIssue.id)
+      setDecisionFilter('All')
+      setActiveProcessStep('Decisions')
     }
 
     return (
@@ -1328,8 +1399,8 @@ export default function App() {
           </div>
 
           <div className="review-issue-list" aria-label="Review issues">
-            {filteredIssues.map((issue) => {
-              const isActive = issue.id === selectedIssue.id
+            {filteredIssues.length > 0 ? filteredIssues.map((issue) => {
+              const isActive = issue.id === selectedIssue?.id
               return (
                 <button
                   key={issue.id}
@@ -1348,59 +1419,82 @@ export default function App() {
                   </span>
                 </button>
               )
-            })}
+            }) : (
+              <div className="workspace-empty-state">
+                <strong>No issues match this filter</strong>
+                <p>Try another filter to return to the current review issue list.</p>
+              </div>
+            )}
           </div>
         </section>
 
         <aside className="workspace-side-panel card review-detail-panel" aria-label="Selected issue details">
-          <div className="sidebar-header">
-            <p className="section-label">Selected issue</p>
-            <h2>{selectedIssue.title}</h2>
-            <p>{selectedIssue.description}</p>
-          </div>
+          {selectedIssue ? (
+            <>
+              <div className="sidebar-header">
+                <p className="section-label">Selected issue</p>
+                <h2>{selectedIssue.title}</h2>
+                <p>{selectedIssue.description}</p>
+              </div>
 
-          <dl className="source-meta-list">
-            <div>
-              <dt>Area</dt>
-              <dd>{selectedIssue.area}</dd>
-            </div>
-            <div>
-              <dt>Severity</dt>
-              <dd>{selectedIssue.severity}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>{selectedIssue.status}</dd>
-            </div>
-            <div>
-              <dt>Sources</dt>
-              <dd>{selectedIssue.source} vs {selectedIssue.comparedWith}</dd>
-            </div>
-            <div>
-              <dt>Decision</dt>
-              <dd>{selectedDecision}</dd>
-            </div>
-          </dl>
+              <dl className="source-meta-list">
+                <div>
+                  <dt>Area</dt>
+                  <dd>{selectedIssue.area}</dd>
+                </div>
+                <div>
+                  <dt>Severity</dt>
+                  <dd>{selectedIssue.severity}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{selectedIssue.status}</dd>
+                </div>
+                <div>
+                  <dt>Sources</dt>
+                  <dd>{selectedIssue.source} vs {selectedIssue.comparedWith}</dd>
+                </div>
+                <div>
+                  <dt>Decision</dt>
+                  <dd>{selectedDecision}</dd>
+                </div>
+                <div>
+                  <dt>Save state</dt>
+                  <dd>
+                    <span className={`persistence-badge persistence-badge-${getStateToken(selectedIssuePersistence)}`}>
+                      {selectedIssuePersistence}
+                    </span>
+                  </dd>
+                </div>
+              </dl>
 
-          <section className="decision-readiness" aria-label="Decision readiness">
-            <p className="section-label">Decision readiness</p>
-            <h3>{selectedDecision === 'Required' ? 'Ready for decision' : 'Not marked yet'}</h3>
-            <p>{selectedIssue.suggestedAction}</p>
-          </section>
+              <section className="decision-readiness" aria-label="Decision readiness">
+                <p className="section-label">Decision readiness</p>
+                <h3>{decisionReadinessTitle}</h3>
+                <p>{selectedIssue.suggestedAction}</p>
+                <p className="persistence-note">{persistenceStateDescription[selectedIssuePersistence]}</p>
+              </section>
 
-          <div className="review-detail-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={markForDecision}
-              disabled={selectedDecision === 'Required'}
-            >
-              Mark for decision
-            </button>
-            <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Decisions')}>
-              Go to Decisions
-            </button>
-          </div>
+              <div className="review-detail-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={markForDecision}
+                  disabled={selectedDecision !== 'None'}
+                >
+                  Mark for decision
+                </button>
+                <button type="button" className="secondary-button" onClick={goToDecisions}>
+                  Go to Decisions
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="workspace-empty-state workspace-empty-state-panel">
+              <strong>No issue selected</strong>
+              <p>The current filter has no matching issues. Choose another filter to see issue details.</p>
+            </div>
+          )}
         </aside>
       </section>
     )
@@ -1419,9 +1513,13 @@ export default function App() {
 
     const selectedDecision =
       filteredDecisions.find((record) => record.issueId === activeDecisionIssueId) ??
-      filteredDecisions[0] ??
-      decisionRows.find((record) => record.issueId === activeDecisionIssueId) ??
-      decisionRows[0]
+      filteredDecisions[0]
+    const selectedDecisionIssue = selectedDecision
+      ? reviewIssues.find((issue) => issue.id === selectedDecision.issueId)
+      : undefined
+    const selectedDecisionPersistence = selectedDecision
+      ? decisionPersistenceStates[selectedDecision.issueId] ?? defaultPersistenceState
+      : defaultPersistenceState
 
     const summary = decisionRows.reduce(
       (acc, record) => {
@@ -1434,6 +1532,8 @@ export default function App() {
     const filterOptions: DecisionFilter[] = ['All', 'Required', 'Drafted', 'Accepted', 'Deferred']
 
     const setDecisionStatus = (status: DecisionStatus) => {
+      if (!selectedDecision) return
+
       setDecisionStatuses((current) => ({
         ...current,
         [selectedDecision.issueId]: status,
@@ -1442,6 +1542,17 @@ export default function App() {
         ...current,
         [selectedDecision.issueId]: status,
       }))
+      setDecisionPersistenceStates((current) => ({
+        ...current,
+        [selectedDecision.issueId]: 'Pending save',
+      }))
+      addAuditEvent({
+        type: 'Decision',
+        title: status === 'Accepted' ? 'Decision accepted' : 'Decision drafted',
+        relatedTo: selectedDecision.issueTitle,
+        summary: `${selectedDecision.issueTitle} decision changed from ${selectedDecision.status} to ${status}.`,
+        detail: 'Local audit event created from Decisions. It captures the decision status change without writing to a backend.',
+      })
     }
 
     return (
@@ -1496,14 +1607,17 @@ export default function App() {
           </div>
 
           <div className="decision-list" aria-label="Decision records">
-            {filteredDecisions.map((record) => {
-              const isActive = record.issueId === selectedDecision.issueId
+            {filteredDecisions.length > 0 ? filteredDecisions.map((record) => {
+              const isActive = record.issueId === selectedDecision?.issueId
               return (
                 <button
                   key={record.issueId}
                   type="button"
                   className={`decision-row ${isActive ? 'decision-row-active' : ''}`}
-                  onClick={() => setActiveDecisionIssueId(record.issueId)}
+                  onClick={() => {
+                    setActiveDecisionIssueId(record.issueId)
+                    setActiveReviewIssueId(record.issueId)
+                  }}
                 >
                   <span className={`decision-status decision-status-${record.status.toLowerCase()}`}>{record.status}</span>
                   <span className="decision-row-main">
@@ -1516,62 +1630,106 @@ export default function App() {
                   </span>
                 </button>
               )
-            })}
+            }) : (
+              <div className="workspace-empty-state">
+                <strong>No decisions match this filter</strong>
+                <p>Try another filter to return to the decision record list.</p>
+              </div>
+            )}
           </div>
         </section>
 
         <aside className="workspace-side-panel card decision-detail-panel" aria-label="Selected decision details">
-          <div className="sidebar-header">
-            <p className="section-label">Selected decision</p>
-            <h2>{selectedDecision.issueTitle}</h2>
-            <p>{selectedDecision.proposedDecision}</p>
-          </div>
+          {selectedDecision ? (
+            <>
+              <div className="sidebar-header">
+                <p className="section-label">Selected decision</p>
+                <h2>{selectedDecision.issueTitle}</h2>
+                <p>{selectedDecision.proposedDecision}</p>
+              </div>
 
-          <section className="decision-detail-block">
-            <p className="section-label">Decision rationale</p>
-            <p>{selectedDecision.rationale}</p>
-          </section>
+              <section className="decision-detail-block">
+                <p className="section-label">Review issue context</p>
+                <p>
+                  {selectedDecisionIssue
+                    ? `${selectedDecisionIssue.area} | ${selectedDecisionIssue.severity} severity | ${selectedDecisionIssue.status}`
+                    : 'Linked review issue context is not available in the local mock data.'}
+                </p>
+              </section>
 
-          <dl className="source-meta-list">
-            <div>
-              <dt>Linked issue</dt>
-              <dd>{selectedDecision.issueTitle}</dd>
-            </div>
-            <div>
-              <dt>Decision status</dt>
-              <dd>{selectedDecision.status}</dd>
-            </div>
-            <div>
-              <dt>Output impact</dt>
-              <dd>{selectedDecision.outputImpact}</dd>
-            </div>
-            <div>
-              <dt>Audit state</dt>
-              <dd>{selectedDecision.auditState}</dd>
-            </div>
-          </dl>
+              <section className="decision-detail-block">
+                <p className="section-label">Decision rationale</p>
+                <p>{selectedDecision.rationale}</p>
+              </section>
 
-          <div className="decision-detail-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setDecisionStatus('Drafted')}
-              disabled={selectedDecision.status === 'Drafted' || selectedDecision.status === 'Accepted'}
-            >
-              Set as drafted
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setDecisionStatus('Accepted')}
-              disabled={selectedDecision.status === 'Accepted'}
-            >
-              Accept decision
-            </button>
-            <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Review')}>
-              Back to Review
-            </button>
-          </div>
+              <dl className="source-meta-list">
+                <div>
+                  <dt>Linked issue</dt>
+                  <dd>{selectedDecision.issueTitle}</dd>
+                </div>
+                <div>
+                  <dt>Decision status</dt>
+                  <dd>{selectedDecision.status}</dd>
+                </div>
+                <div>
+                  <dt>Output impact</dt>
+                  <dd>{selectedDecision.outputImpact}</dd>
+                </div>
+                <div>
+                  <dt>Audit state</dt>
+                  <dd>{selectedDecision.auditState}</dd>
+                </div>
+                <div>
+                  <dt>Save state</dt>
+                  <dd>
+                    <span className={`persistence-badge persistence-badge-${getStateToken(selectedDecisionPersistence)}`}>
+                      {selectedDecisionPersistence}
+                    </span>
+                  </dd>
+                </div>
+              </dl>
+
+              <section className="decision-detail-block">
+                <p className="section-label">Persistence state</p>
+                <p>{persistenceStateDescription[selectedDecisionPersistence]}</p>
+              </section>
+
+              <div className="decision-detail-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setDecisionStatus('Drafted')}
+                  disabled={selectedDecision.status === 'Drafted' || selectedDecision.status === 'Accepted'}
+                >
+                  Set as drafted
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setDecisionStatus('Accepted')}
+                  disabled={selectedDecision.status === 'Accepted'}
+                >
+                  Accept decision
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setActiveReviewIssueId(selectedDecision.issueId)
+                    setReviewIssueFilter('All')
+                    setActiveProcessStep('Review')
+                  }}
+                >
+                  Back to Review
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="workspace-empty-state workspace-empty-state-panel">
+              <strong>No decision selected</strong>
+              <p>The current filter has no matching decision records. Choose another filter to see decision details.</p>
+            </div>
+          )}
         </aside>
       </section>
     )
@@ -1605,9 +1763,10 @@ export default function App() {
 
     const selectedOutputItem =
       filteredOutputItems.find((item) => item.id === activeOutputItemId) ??
-      filteredOutputItems[0] ??
-      outputRows.find((item) => item.id === activeOutputItemId) ??
-      outputRows[0]
+      filteredOutputItems[0]
+    const selectedOutputPersistence = selectedOutputItem
+      ? outputPersistenceStates[selectedOutputItem.id] ?? defaultPersistenceState
+      : defaultPersistenceState
 
     const summary = outputRows.reduce(
       (acc, item) => {
@@ -1621,22 +1780,23 @@ export default function App() {
     )
 
     const filterOptions: OutputFilter[] = ['All', 'Ready', 'Blocked', 'Needs decision', 'Not persisted']
-    const linkedDecisionLabel = selectedOutputItem.linkedDecision
+    const linkedDecisionLabel = selectedOutputItem?.linkedDecision
       ? `${selectedOutputItem.linkedDecision.issueTitle} (${selectedOutputItem.linkedDecision.status})`
       : 'No accepted decision'
-    const canPrepareOutput = selectedOutputItem.linkedDecision?.status === 'Accepted'
+    const canPrepareOutput = selectedOutputItem?.linkedDecision?.status === 'Accepted'
     const readinessText =
-      selectedOutputItem.status === 'Ready'
+      selectedOutputItem?.status === 'Ready'
         ? 'Ready to include in the output artifact.'
-        : selectedOutputItem.status === 'Blocked'
+        : selectedOutputItem?.status === 'Blocked'
           ? 'Blocked from output until the decision changes.'
-          : selectedOutputItem.status === 'Needs decision'
+          : selectedOutputItem?.status === 'Needs decision'
             ? 'Waiting for an accepted decision before output can be prepared.'
             : 'Output item is not persisted and has no settled decision basis yet.'
+    const auditRows = [...localAuditEvents, ...auditEvents]
     const selectedAuditEvent =
-      auditEvents.find((event) => event.id === activeAuditEventId) ??
-      auditEvents[0]
-    const auditSummary = auditEvents.reduce(
+      auditRows.find((event) => event.id === activeAuditEventId) ??
+      auditRows[0]
+    const auditSummary = auditRows.reduce(
       (acc, event) => {
         acc.events += 1
         if (event.state === 'Not persisted') acc.notPersisted += 1
@@ -1648,12 +1808,24 @@ export default function App() {
     )
 
     const prepareOutput = () => {
-      if (!canPrepareOutput) return
+      if (!selectedOutputItem) return
+      if (!canPrepareOutput || outputStatuses[selectedOutputItem.id] === 'Ready') return
 
       setOutputStatuses((current) => ({
         ...current,
         [selectedOutputItem.id]: 'Ready',
       }))
+      setOutputPersistenceStates((current) => ({
+        ...current,
+        [selectedOutputItem.id]: 'Pending save',
+      }))
+      addAuditEvent({
+        type: 'Output',
+        title: 'Output prepared',
+        relatedTo: selectedOutputItem.title,
+        summary: `${selectedOutputItem.title} was prepared as a draft output candidate.`,
+        detail: 'Local audit event created from Output readiness. The output artifact is still not persisted.',
+      })
     }
 
     return (
@@ -1709,8 +1881,8 @@ export default function App() {
             </div>
 
             <div className="output-list" aria-label="Output items">
-              {filteredOutputItems.map((item) => {
-                const isActive = item.id === selectedOutputItem.id
+              {filteredOutputItems.length > 0 ? filteredOutputItems.map((item) => {
+                const isActive = item.id === selectedOutputItem?.id
                 return (
                   <button
                     key={item.id}
@@ -1729,59 +1901,87 @@ export default function App() {
                     </span>
                   </button>
                 )
-              })}
+              }) : (
+                <div className="workspace-empty-state">
+                  <strong>No output items match this filter</strong>
+                  <p>Try another filter to return to the output readiness list.</p>
+                </div>
+              )}
             </div>
           </section>
 
           <aside className="workspace-side-panel card output-detail-panel" aria-label="Selected output item details">
-            <div className="sidebar-header">
-              <p className="section-label">Selected output</p>
-              <h2>{selectedOutputItem.title}</h2>
-              <p>{selectedOutputItem.description}</p>
-            </div>
+            {selectedOutputItem ? (
+              <>
+                <div className="sidebar-header">
+                  <p className="section-label">Selected output</p>
+                  <h2>{selectedOutputItem.title}</h2>
+                  <p>{selectedOutputItem.description}</p>
+                </div>
 
-            <section className="output-readiness" aria-label="Output readiness">
-              <p className="section-label">Output readiness</p>
-              <h3>{selectedOutputItem.status}</h3>
-              <p>{readinessText}</p>
-            </section>
+                <section className="output-readiness" aria-label="Output readiness">
+                  <p className="section-label">Output readiness</p>
+                  <h3>{selectedOutputItem.status}</h3>
+                  <p>{readinessText}</p>
+                </section>
 
-            <dl className="source-meta-list">
-              <div>
-                <dt>Linked decision</dt>
-                <dd>{linkedDecisionLabel}</dd>
-              </div>
-              <div>
-                <dt>Output status</dt>
-                <dd>{selectedOutputItem.status}</dd>
-              </div>
-              <div>
-                <dt>Source basis</dt>
-                <dd>{selectedOutputItem.sourceBasis}</dd>
-              </div>
-              <div>
-                <dt>Readiness</dt>
-                <dd>{readinessText}</dd>
-              </div>
-              <div>
-                <dt>Audit state</dt>
-                <dd>{selectedOutputItem.auditState}</dd>
-              </div>
-            </dl>
+                <dl className="source-meta-list">
+                  <div>
+                    <dt>Linked decision</dt>
+                    <dd>{linkedDecisionLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Output status</dt>
+                    <dd>{selectedOutputItem.status}</dd>
+                  </div>
+                  <div>
+                    <dt>Source basis</dt>
+                    <dd>{selectedOutputItem.sourceBasis}</dd>
+                  </div>
+                  <div>
+                    <dt>Readiness</dt>
+                    <dd>{readinessText}</dd>
+                  </div>
+                  <div>
+                    <dt>Audit state</dt>
+                    <dd>{selectedOutputItem.auditState}</dd>
+                  </div>
+                  <div>
+                    <dt>Save state</dt>
+                    <dd>
+                      <span className={`persistence-badge persistence-badge-${getStateToken(selectedOutputPersistence)}`}>
+                        {selectedOutputPersistence}
+                      </span>
+                    </dd>
+                  </div>
+                </dl>
 
-            <div className="output-detail-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={prepareOutput}
-                disabled={selectedOutputItem.status === 'Ready' || !canPrepareOutput}
-              >
-                Prepare output
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Decisions')}>
-                Back to Decisions
-              </button>
-            </div>
+                <section className="output-readiness" aria-label="Output persistence">
+                  <p className="section-label">Persistence state</p>
+                  <h3>{selectedOutputPersistence}</h3>
+                  <p>{persistenceStateDescription[selectedOutputPersistence]}</p>
+                </section>
+
+                <div className="output-detail-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={prepareOutput}
+                    disabled={outputStatuses[selectedOutputItem.id] === 'Ready' || !canPrepareOutput}
+                  >
+                    Prepare output
+                  </button>
+                  <button type="button" className="secondary-button" onClick={() => setActiveProcessStep('Decisions')}>
+                    Back to Decisions
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="workspace-empty-state workspace-empty-state-panel">
+                <strong>No output selected</strong>
+                <p>The current filter has no matching output items. Choose another filter to see output details.</p>
+              </div>
+            )}
           </aside>
         </section>
 
@@ -1819,7 +2019,7 @@ export default function App() {
 
           <div className="audit-preview-grid">
             <div className="audit-event-list" aria-label="Audit events">
-              {auditEvents.map((event) => {
+              {auditRows.map((event) => {
                 const isActive = event.id === selectedAuditEvent.id
                 return (
                   <button
@@ -1858,6 +2058,14 @@ export default function App() {
                 <div>
                   <dt>State</dt>
                   <dd>{selectedAuditEvent.state}</dd>
+                </div>
+                <div>
+                  <dt>Persistence</dt>
+                  <dd>
+                    <span className={`persistence-badge persistence-badge-${getStateToken(selectedAuditEvent.persistence)}`}>
+                      {selectedAuditEvent.persistence}
+                    </span>
+                  </dd>
                 </div>
                 <div>
                   <dt>Detail</dt>
