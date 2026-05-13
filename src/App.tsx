@@ -9,6 +9,14 @@ import {
   sourceDefinitions,
   validationStatesBySource,
 } from './mockData'
+import {
+  defaultPersistenceState,
+  findDecisionForIssue,
+  getOutputStatusFromDecision,
+  getStateToken,
+  persistenceStateDescription,
+  resolveDecisionStatus,
+} from './workflowModel'
 import type {
   AppView,
   AuditEvent,
@@ -16,7 +24,6 @@ import type {
   ConnectionCard,
   ConnectionTreeSection,
   DecisionFilter,
-  DecisionRecord,
   DecisionState,
   DecisionStatus,
   MainStage,
@@ -517,36 +524,6 @@ const activeStepByStatus: Record<ReviewStatus, ProcessStep> = {
   Completed: 'Output',
 }
 
-const resolveDecisionStatus = (
-  record: DecisionRecord,
-  issueDecisionStates: Record<string, DecisionState>,
-  decisionStatuses: Record<string, DecisionStatus>,
-): DecisionStatus => {
-  const issueDecisionState = issueDecisionStates[record.issueId]
-  const issueDrivenStatus = issueDecisionState && issueDecisionState !== 'None' ? issueDecisionState : record.status
-
-  return decisionStatuses[record.issueId] ?? issueDrivenStatus
-}
-
-const getOutputStatusFromDecision = (decisionStatus?: DecisionStatus): OutputStatus => {
-  if (decisionStatus === 'Accepted') return 'Ready'
-  if (decisionStatus === 'Deferred') return 'Blocked'
-  if (decisionStatus) return 'Needs decision'
-  return 'Not persisted'
-}
-
-const defaultPersistenceState: PersistenceState = 'Source snapshot'
-
-const persistenceStateDescription: Record<PersistenceState, string> = {
-  'Source snapshot': 'Loaded from the current review snapshot.',
-  'Pending save': 'Waiting for future backend save and audit confirmation.',
-  Saved: 'Saved by the backend.',
-  'Save failed': 'Backend save failed and needs retry.',
-  'Audit recorded': 'Saved with a confirmed audit trail event.',
-}
-
-const getStateToken = (value: string) => value.toLowerCase().replace(/\s+/g, '-')
-
 export default function App() {
   const [isAdmin] = useState(true)
   const [appView, setAppView] = useState<AppView>('dashboard')
@@ -830,7 +807,7 @@ export default function App() {
         decisionStatuses[issue.id] ??
         (issue.decision !== 'None'
           ? issue.decision
-          : decisionRecords.find((record) => record.issueId === issue.id)?.status ?? issue.decision),
+          : findDecisionForIssue(decisionRecords, issue.id)?.status ?? issue.decision),
     }))
 
     const filteredIssues = issueRows.filter((issue) => {
@@ -1293,7 +1270,7 @@ export default function App() {
 
     const outputRows = outputItems.map((item) => {
       const linkedDecision = item.linkedIssueId
-        ? decisionRows.find((record) => record.issueId === item.linkedIssueId)
+        ? findDecisionForIssue(decisionRows, item.linkedIssueId)
         : undefined
 
       const derivedStatus = getOutputStatusFromDecision(linkedDecision?.status)
