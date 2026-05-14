@@ -1,5 +1,27 @@
 import { useMemo, useState } from 'react'
-import type { ReactNode, SVGProps } from 'react'
+import type { ChangeEvent, ReactNode, SVGProps } from 'react'
+import { parseDelimitedReviewSnapshot } from './adapters/readOnlyReviewAdapter'
+import type { ReviewIssueAdapterResult } from './adapters/readOnlyReviewAdapter'
+import {
+  createLocalAuditEvent,
+  markIssueForDecision,
+  prepareWorkflowOutput,
+  setWorkflowDecisionStatus,
+} from './domain/workflowActions'
+import type { AuditEventDraft } from './domain/workflowActions'
+import {
+  filterDecisions,
+  filterOutputItems,
+  filterReviewIssues,
+  getDecisionRows,
+  getOutputReadinessText,
+  getOutputRows,
+  getReviewIssueRows,
+  summarizeAuditEvents,
+  summarizeDecisions,
+  summarizeOutputItems,
+  summarizeReviewIssues,
+} from './domain/workflowSelectors'
 import {
   auditEvents,
   dashboardRows,
@@ -11,11 +33,8 @@ import {
 } from './mockData'
 import {
   defaultPersistenceState,
-  findDecisionForIssue,
-  getOutputStatusFromDecision,
   getStateToken,
   persistenceStateDescription,
-  resolveDecisionStatus,
 } from './workflowModel'
 import type {
   AppView,
@@ -56,6 +75,7 @@ const bomStages: BomStage[] = ['MATVAR', 'L1', 'L2', 'L3']
 
 const sidebarSteps: SidebarStepDefinition[] = [
   { step: 'Main', label: 'Main', icon: 'main' },
+  { step: 'Sources', label: 'Sources', icon: 'sources' },
   { step: 'Connections', label: 'Connections', icon: 'connections' },
   { step: 'Validation', label: 'Validation', icon: 'validation' },
   { step: 'Normalization', label: 'Normalization', icon: 'normalization' },
@@ -63,6 +83,7 @@ const sidebarSteps: SidebarStepDefinition[] = [
   { step: 'Review', label: 'Review', icon: 'review' },
   { step: 'Decisions', label: 'Decisions', icon: 'decisions' },
   { step: 'Output', label: 'Output', icon: 'output' },
+  { step: 'AI Assistant', label: 'AI Assistant', icon: 'aiAssistant' },
 ]
 
 
@@ -110,6 +131,13 @@ function SidebarGlyph({ name, className, ...props }: { name: SidebarIconName; cl
         <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
         <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
         <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
+      </>
+    ),
+    sources: (
+      <>
+        <path d="M5 6.5c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z" />
+        <path d="M5 6.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
+        <path d="M5 11.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
       </>
     ),
     connections: (
@@ -166,6 +194,13 @@ function SidebarGlyph({ name, className, ...props }: { name: SidebarIconName; cl
         <path d="m8 10 4 4 4-4" />
         <path d="M5 18.5h14" />
         <path d="M6.5 21h11" />
+      </>
+    ),
+    aiAssistant: (
+      <>
+        <path d="M12 3.5 13.4 8l4.4 1.4-4.4 1.4L12 15.5l-1.4-4.7-4.4-1.4L10.6 8 12 3.5Z" />
+        <path d="M18 14.5 18.8 17l2.2.8-2.2.8L18 21l-.8-2.4-2.2-.8 2.2-.8.8-2.5Z" />
+        <path d="M6.5 15.5 7 17l1.5.5L7 18l-.5 1.5L6 18l-1.5-.5L6 17l.5-1.5Z" />
       </>
     ),
   }
@@ -382,6 +417,40 @@ const sourceCardTemplates: Record<string, ConnectionCard[]> = {
   ],
 }
 
+type EditableConnectionCard = ConnectionCard & {
+  selectedFileName?: string
+  selectedFilePath?: string
+  selectedFileDirectory?: string
+  selectedFileExtension?: string
+  selectedFileSizeBytes?: number
+  selectedFileModifiedAt?: string
+  fileSelectionError?: string
+  fileSelectionPending?: boolean
+}
+
+type LocalFileSelection = {
+  name: string
+  path: string
+  directory: string
+  extension: string
+  sizeBytes: number
+  modifiedAt: string
+}
+
+const localFileHelperEndpoint = 'http://127.0.0.1:8787/api/local-file-dialog'
+
+const formatFileSize = (sizeBytes: number) => {
+  if (sizeBytes < 1024) return `${sizeBytes} B`
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const formatFileModifiedAt = (modifiedAt: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(modifiedAt))
+
 const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   Main: {
     eyebrow: 'Main',
@@ -392,6 +461,16 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
     yourRole: 'Na tym etapie nie pracujesz jeszcze na szczegółowych danych. Twoim zadaniem jest ocenić, w jakim miejscu procesu jesteś i zdecydować, do którego kroku wejść dalej.',
     example: 'Przykład: wchodzisz na review i od razu widzisz, że źródła są już podłączone, walidacja ma warningi, a Comparison jeszcze nie było uruchomione. Dzięki temu wiesz, że najpierw powinieneś sprawdzić Validation, a nie przechodzić od razu do decyzji.',
     output: 'Masz szybki, czytelny obraz sytuacji i wiesz, gdzie wkroczyć w kolejnym kroku.',
+  },
+  Sources: {
+    eyebrow: 'Sources',
+    title: 'Lista dostepnych zrodel danych dla review',
+    summary: 'Ten etap pokazuje katalog zrodel, ktore moga zostac uzyte w review. To jest miejsce orientacji: jakie wejscia istnieja, jaki maja charakter i z czego bedzie mozna budowac polaczenia w kolejnym kroku.',
+    goal: 'Pokazac dostepne zrodla zanim zostana przypisane do BOM, Documentation albo Costing.',
+    function: 'Oddziela katalog zrodel od samego mapowania polaczen. Sources odpowiada na pytanie co mamy, a Connections na pytanie gdzie to podpinamy.',
+    yourRole: 'Tutaj sprawdzasz, czy na liscie sa wszystkie potrzebne wejscia do review. Nie rozstrzygasz jeszcze, do ktorego etapu trafia konkretne zrodlo.',
+    example: 'Przyklad: widzisz Fishbowl, Parts&BOM, BOX documentation i Costing export jako dostepne wejscia. Dopiero potem w Connections przypisujesz je do konkretnych obszarow procesu.',
+    output: 'Masz przejrzysty katalog zrodel, gotowy do wykorzystania w konfiguracji polaczen.',
   },
   Connections: {
     eyebrow: 'Connections',
@@ -463,12 +542,26 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
     example: 'Przykład: po zamknięciu najważniejszych issue generujesz finalny BOM do dalszej pracy, raport różnic dla engineeringu i eksport Excel dla produkcji. Jeśli później review się zmieni, system może zapisać kolejną wersję outputu bez utraty historii.',
     output: 'Powstaje trwały, zapisany wynik review, do którego można wrócić razem z historią decyzji i audytem.',
   },
+  'AI Assistant': {
+    eyebrow: 'AI Assistant',
+    title: 'Pomoc AI w pracy nad review',
+    summary: 'Ten etap bedzie miejscem rozmowy z asystentem AI w kontekscie aktualnego review, zrodel, issue, decyzji i outputu.',
+    goal: 'Dac uzytkownikowi szybka pomoc w zrozumieniu stanu review i kolejnych dzialan.',
+    function: 'W przyszlosci asystent bedzie odpowiadal na pytania, podsumowywal problemy, proponowal sprawdzenia i pomagal przygotowac decyzje bez mieszania danych zrodlowych.',
+    yourRole: 'Tutaj bedziesz mogl zapytac o kontekst, poprosic o podsumowanie albo wskazac, co aplikacja ma wyjasnic przed kolejnym krokiem.',
+    example: 'Przyklad: pytasz AI, ktore issue blokuja output albo dlaczego dana roznica wymaga decyzji. Asystent odpowiada na podstawie aktualnego review.',
+    output: 'Masz pomocnicza warstwe analizy i nawigacji po review, oddzielona od danych, decyzji i finalnych artefaktow.',
+  },
 }
 
 const nextStepByProcess: Record<ProcessStep, { title: string; description: string }> = {
   Main: {
     title: 'Main project workspace',
     description: 'This opens the current BOM, Documentation and Costing view without changes.',
+  },
+  Sources: {
+    title: 'Sources',
+    description: 'This step lists available data sources before linking them to workflow stages.',
   },
   Connections: {
     title: 'Connections',
@@ -497,6 +590,10 @@ const nextStepByProcess: Record<ProcessStep, { title: string; description: strin
   Output: {
     title: 'Output',
     description: 'This step will show exports, results and history.',
+  },
+  'AI Assistant': {
+    title: 'AI Assistant',
+    description: 'This step will help explain review context and suggest next actions.',
   },
 }
 
@@ -546,26 +643,163 @@ export default function App() {
   const [outputPersistenceStates, setOutputPersistenceStates] = useState<Record<string, PersistenceState>>({})
   const [activeAuditEventId, setActiveAuditEventId] = useState<string>(auditEvents[0].id)
   const [localAuditEvents, setLocalAuditEvents] = useState<AuditEvent[]>([])
+  const [reviewImportPreview, setReviewImportPreview] = useState<ReviewIssueAdapterResult | null>(null)
+  const [reviewImportError, setReviewImportError] = useState<string | null>(null)
+  const [connectionCardsByStage, setConnectionCardsByStage] = useState<Record<string, EditableConnectionCard[]>>(() =>
+    Object.fromEntries(
+      Object.entries(sourceCardTemplates).map(([stageId, cards]) => [
+        stageId,
+        cards.map((card) => ({ ...card })),
+      ]),
+    ) as Record<string, EditableConnectionCard[]>,
+  )
 
   const selectedReview = useMemo(
     () => dashboardRows.find((row) => row.id === selectedReviewId) ?? null,
     [selectedReviewId],
   )
 
-  const addAuditEvent = (event: Omit<AuditEvent, 'id' | 'actor' | 'timestamp' | 'state' | 'persistence'>) => {
-    const nextEvent: AuditEvent = {
-      ...event,
+  const addAuditEvent = (event: AuditEventDraft) => {
+    const nextEvent = createLocalAuditEvent(event, {
       id: `audit-local-${Date.now()}`,
       actor: selectedReview?.owner ?? 'Damian',
-      timestamp: 'Just now',
-      state: 'Not persisted',
-      persistence: 'Pending save',
-    }
+    })
 
     setLocalAuditEvents((current) => [nextEvent, ...current])
     setActiveAuditEventId(nextEvent.id)
   }
 
+  const addConnectionCard = (stageId: string) => {
+    setConnectionCardsByStage((current) => {
+      const existingCards = current[stageId] ?? []
+
+      return {
+        ...current,
+        [stageId]: [
+          ...existingCards,
+          {
+            id: `empty-${stageId}-${Date.now()}`,
+            title: 'Choose source',
+            subtitle: `Empty slot ${existingCards.length + 1}`,
+            line1Label: 'Source',
+            line1Value: 'Not selected',
+            line2Label: 'Mode',
+            line2Value: 'Waiting',
+            status: 'Not connected',
+          },
+        ],
+      }
+    })
+  }
+
+  const removeConnectionCard = (stageId: string, cardId: string) => {
+    setConnectionCardsByStage((current) => ({
+      ...current,
+      [stageId]: (current[stageId] ?? []).filter((card) => card.id !== cardId),
+    }))
+  }
+
+  const handleConnectionFileSelection = async (stageId: string, cardId: string) => {
+    setConnectionCardsByStage((current) => ({
+      ...current,
+      [stageId]: (current[stageId] ?? []).map((card) =>
+        card.id === cardId
+          ? {
+              ...card,
+              fileSelectionPending: true,
+              fileSelectionError: undefined,
+            }
+          : card,
+      ),
+    }))
+
+    try {
+      const response = await fetch(localFileHelperEndpoint)
+
+      if (!response.ok) {
+        throw new Error('Local file helper did not respond correctly.')
+      }
+
+      const result = (await response.json()) as {
+        cancelled?: boolean
+        file?: LocalFileSelection
+        error?: string
+      }
+
+      if (result.cancelled) return
+      if (!result.file) {
+        throw new Error(result.error ?? 'No file was returned by the local helper.')
+      }
+
+      const file = result.file
+
+      setConnectionCardsByStage((current) => ({
+        ...current,
+        [stageId]: (current[stageId] ?? []).map((card) =>
+          card.id === cardId
+            ? {
+                ...card,
+                title: file.name,
+                subtitle: 'Local file selected',
+                selectedFileName: file.name,
+                selectedFilePath: file.path,
+                selectedFileDirectory: file.directory,
+                selectedFileExtension: file.extension,
+                selectedFileSizeBytes: file.sizeBytes,
+                selectedFileModifiedAt: file.modifiedAt,
+                fileSelectionError: undefined,
+                fileSelectionPending: false,
+                line1Label: 'Source',
+                line1Value: 'Local file',
+                line2Label: 'File',
+                line2Value: file.name,
+                status: 'Selected',
+              }
+            : card,
+        ),
+      }))
+    } catch (error) {
+      setConnectionCardsByStage((current) => ({
+        ...current,
+        [stageId]: (current[stageId] ?? []).map((card) =>
+          card.id === cardId
+            ? {
+                ...card,
+                fileSelectionError:
+                  error instanceof Error
+                    ? error.message
+                    : 'Could not open the local file dialog.',
+                fileSelectionPending: false,
+              }
+            : card,
+        ),
+      }))
+    }
+  }
+
+  const handleReviewImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const importedAt = new Date().toLocaleString()
+      const result = parseDelimitedReviewSnapshot(file.name, text, importedAt)
+
+      setReviewImportPreview(result)
+      setReviewImportError(null)
+      setReviewIssueFilter('All')
+
+      if (result.issues[0]) {
+        setActiveReviewIssueId(result.issues[0].id)
+      }
+    } catch {
+      setReviewImportPreview(null)
+      setReviewImportError('Could not read this file. Use a CSV or TSV export for the first read-only preview.')
+    } finally {
+      event.target.value = ''
+    }
+  }
 
   const connectionsCustomStyles = `
     .connections-stage { padding: 0; }
@@ -589,6 +823,9 @@ export default function App() {
     .connections-content { padding: 28px; }
     .connections-header { margin-bottom: 24px; }
     .connections-card-wrap { display: grid; gap: 16px; }
+    .connections-card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .connections-card-header-copy { display: grid; gap: 6px; }
+    .connections-card-count { color: #91abc9; font-size: 13px; }
     .connections-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
     .connection-source-card { padding: 20px; border-radius: 22px; border: 1px solid rgba(98,132,173,0.2); background: linear-gradient(180deg, rgba(17,31,50,0.95), rgba(11,24,40,0.98)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }
     .connection-source-top { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
@@ -598,6 +835,7 @@ export default function App() {
     .connection-source-icon { width: 42px; height: 42px; border-radius: 14px; background: radial-gradient(circle at top, rgba(89,160,255,0.8), rgba(24,70,138,0.9)); box-shadow: 0 0 18px rgba(70, 134, 226, 0.35); }
     .connection-source-icon-connecting { background: radial-gradient(circle at top, rgba(255,212,87,0.92), rgba(160,120,20,0.95)); box-shadow: 0 0 18px rgba(255, 206, 84, 0.28); }
     .connection-source-icon-not-connected { background: radial-gradient(circle at top, rgba(124,143,168,0.75), rgba(52,68,92,0.95)); box-shadow: none; }
+    .connection-source-icon-selected { background: radial-gradient(circle at top, rgba(91,213,255,0.86), rgba(25,98,155,0.95)); box-shadow: 0 0 18px rgba(91, 213, 255, 0.3); }
     .connection-source-menu { border: none; background: transparent; color: #8ea9c7; font-size: 22px; padding: 0; line-height: 1; }
     .connection-source-meta { display: grid; gap: 10px; margin: 0 0 18px; }
     .connection-source-meta div { display: grid; grid-template-columns: 72px 1fr; gap: 12px; }
@@ -608,9 +846,22 @@ export default function App() {
     .connection-source-status-connected { color: #68d391; }
     .connection-source-status-connecting { color: #ffd15b; }
     .connection-source-status-not-connected { color: #94a9c5; }
-    .connection-source-actions { display: grid; gap: 12px; }
-    .connection-source-select { width: 100%; border-radius: 12px; border: 1px solid rgba(97,155,244,0.22); background: rgba(8, 29, 56, 0.92); color: #dce9fb; padding: 12px 14px; }
-    .connection-source-buttons { display: flex; gap: 10px; }
+    .connection-source-status-selected { color: #64d8ff; }
+    .connection-source-actions { display: grid; gap: 12px; margin-top: 14px; }
+    .connection-file-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .connection-file-picker { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; padding: 0 14px; border-radius: 11px; border: 1px solid rgba(97,155,244,0.32); background: rgba(8,29,56,0.88); color: #e7f2ff; font-weight: 700; cursor: pointer; }
+    .connection-file-picker:disabled { opacity: 0.55; cursor: wait; }
+    .connection-file-note { margin: 0; color: #91abc9; font-size: 13px; overflow-wrap: anywhere; }
+    .connection-file-details { display: grid; gap: 8px; margin: 2px 0 0; padding: 12px; border-radius: 14px; border: 1px solid rgba(98,132,173,0.16); background: rgba(7, 18, 31, 0.58); }
+    .connection-file-details div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; }
+    .connection-file-details dt { color: #8ca5c2; }
+    .connection-file-details dd { margin: 0; color: #f4f8fd; overflow-wrap: anywhere; }
+    .connection-file-error { margin: 0; color: #ffb9ad; font-size: 13px; line-height: 1.5; }
+    .connection-card-footer { display: flex; justify-content: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(98,132,173,0.14); }
+    .connection-remove-button { border-color: rgba(255,138,122,0.28); color: #ffb9ad; }
+    .connections-empty-state { min-height: 220px; display: grid; place-items: center; gap: 14px; padding: 28px; border-radius: 22px; border: 1px dashed rgba(96,154,230,0.35); background: rgba(9, 21, 36, 0.68); text-align: center; }
+    .connections-empty-state h4 { margin: 0; font-size: 17px; color: #f7fbff; }
+    .connections-empty-state p { max-width: 420px; margin: 0; color: #9eb6d3; line-height: 1.55; }
     @media (max-width: 1200px) { .connections-layout { grid-template-columns: 1fr; } .connections-tree { border-right: none; border-bottom: 1px solid rgba(98,132,173,0.16); } }
     @media (max-width: 900px) { .connections-card-grid { grid-template-columns: 1fr; } }
   `
@@ -800,43 +1051,24 @@ export default function App() {
   }
 
   const renderReviewStep = () => {
-    const issueRows = reviewIssues.map((issue) => ({
-      ...issue,
-      decision:
-        issueDecisionStates[issue.id] ??
-        decisionStatuses[issue.id] ??
-        (issue.decision !== 'None'
-          ? issue.decision
-          : findDecisionForIssue(decisionRecords, issue.id)?.status ?? issue.decision),
-    }))
-
-    const filteredIssues = issueRows.filter((issue) => {
-      if (reviewIssueFilter === 'Open') return issue.status !== 'Resolved'
-      if (reviewIssueFilter === 'Needs decision') return issue.decision === 'Required'
-      if (reviewIssueFilter === 'Resolved') return issue.status === 'Resolved'
-      return true
-    })
+    const reviewIssueSource = reviewImportPreview?.issues.length ? reviewImportPreview.issues : reviewIssues
+    const issueRows = getReviewIssueRows(reviewIssueSource, decisionRecords, issueDecisionStates, decisionStatuses)
+    const filteredIssues = filterReviewIssues(issueRows, reviewIssueFilter)
 
     const selectedIssue =
       filteredIssues.find((issue) => issue.id === activeReviewIssueId) ??
       filteredIssues[0]
 
-    const summary = issueRows.reduce(
-      (acc, issue) => {
-        if (issue.status !== 'Resolved') acc.open += 1
-        if (issue.decision === 'Required') acc.needsDecision += 1
-        if (issue.severity === 'High' && issue.status !== 'Resolved') acc.highSeverity += 1
-        if (issue.status === 'Resolved') acc.resolved += 1
-        return acc
-      },
-      { open: 0, needsDecision: 0, highSeverity: 0, resolved: 0 },
-    )
+    const summary = summarizeReviewIssues(issueRows)
 
     const filterOptions: ReviewIssueFilter[] = ['All', 'Open', 'Needs decision', 'Resolved']
     const selectedDecision = selectedIssue?.decision ?? 'None'
     const selectedIssuePersistence = selectedIssue
       ? issuePersistenceStates[selectedIssue.id] ?? decisionPersistenceStates[selectedIssue.id] ?? defaultPersistenceState
       : defaultPersistenceState
+    const selectedIssueHasDecisionRecord = selectedIssue
+      ? decisionRecords.some((record) => record.issueId === selectedIssue.id)
+      : false
     const decisionReadinessTitle =
       selectedDecision === 'Required'
         ? 'Ready for decision'
@@ -847,23 +1079,16 @@ export default function App() {
     const markForDecision = () => {
       if (!selectedIssue) return
 
-      setIssueDecisionStates((current) => ({
-        ...current,
-        [selectedIssue.id]: 'Required',
-      }))
-      setIssuePersistenceStates((current) => ({
-        ...current,
-        [selectedIssue.id]: 'Pending save',
-      }))
+      const nextWorkflowState = markIssueForDecision(selectedIssue, {
+        issueDecisionStates,
+        issuePersistenceStates,
+      })
+
+      setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
+      setIssuePersistenceStates(nextWorkflowState.issuePersistenceStates)
       setActiveDecisionIssueId(selectedIssue.id)
       setDecisionFilter('All')
-      addAuditEvent({
-        type: 'Issue',
-        title: 'Issue marked for decision',
-        relatedTo: selectedIssue.title,
-        summary: `${selectedIssue.title} was marked as requiring a decision.`,
-        detail: 'Local audit event created from Review. This records the triage action before persistence exists.',
-      })
+      addAuditEvent(nextWorkflowState.auditEvent)
     }
 
     const goToDecisions = () => {
@@ -886,8 +1111,42 @@ export default function App() {
             <div className="review-workspace-context">
               <span className="meta-chip">Review: {selectedReview?.intelModel}</span>
               <span className="meta-chip">Issues: {issueRows.length}</span>
+              <span className="meta-chip">Data: {reviewImportPreview ? reviewImportPreview.sourceName : 'Mock data'}</span>
             </div>
           </div>
+
+          <section className="review-import-preview" aria-label="Read-only import preview">
+            <div>
+              <p className="section-label">Read-only data preview</p>
+              <h4>CSV / TSV issue preview</h4>
+              <p>Select an exported CSV or TSV file to map rows into review issues without saving or changing any source file.</p>
+            </div>
+            <div className="review-import-actions">
+              <label className="secondary-button review-import-file">
+                Choose file
+                <input type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" onChange={handleReviewImportFile} />
+              </label>
+              {reviewImportPreview ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setReviewImportPreview(null)
+                    setReviewImportError(null)
+                    setActiveReviewIssueId(reviewIssues[0].id)
+                  }}
+                >
+                  Clear preview
+                </button>
+              ) : null}
+            </div>
+            {reviewImportPreview ? (
+              <p className="review-import-status">
+                Loaded {reviewImportPreview.issues.length} rows from {reviewImportPreview.sourceName}. Columns: {reviewImportPreview.columns?.join(', ') || 'none'}.
+              </p>
+            ) : null}
+            {reviewImportError ? <p className="review-import-error">{reviewImportError}</p> : null}
+          </section>
 
           <div className="review-stat-grid" aria-label="Review issue summary">
             <article className="review-stat-card">
@@ -1011,7 +1270,12 @@ export default function App() {
                 >
                   Mark for decision
                 </button>
-                <button type="button" className="secondary-button" onClick={goToDecisions}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={goToDecisions}
+                  disabled={!selectedIssueHasDecisionRecord}
+                >
                   Go to Decisions
                 </button>
               </div>
@@ -1028,15 +1292,8 @@ export default function App() {
   }
 
   const renderDecisionsStep = () => {
-    const decisionRows = decisionRecords.map((record) => ({
-      ...record,
-      status: resolveDecisionStatus(record, issueDecisionStates, decisionStatuses),
-    }))
-
-    const filteredDecisions = decisionRows.filter((record) => {
-      if (decisionFilter === 'All') return true
-      return record.status === decisionFilter
-    })
+    const decisionRows = getDecisionRows(decisionRecords, issueDecisionStates, decisionStatuses)
+    const filteredDecisions = filterDecisions(decisionRows, decisionFilter)
 
     const selectedDecision =
       filteredDecisions.find((record) => record.issueId === activeDecisionIssueId) ??
@@ -1048,38 +1305,23 @@ export default function App() {
       ? decisionPersistenceStates[selectedDecision.issueId] ?? defaultPersistenceState
       : defaultPersistenceState
 
-    const summary = decisionRows.reduce(
-      (acc, record) => {
-        acc[record.status] += 1
-        return acc
-      },
-      { Required: 0, Drafted: 0, Accepted: 0, Deferred: 0 } as Record<DecisionStatus, number>,
-    )
+    const summary = summarizeDecisions(decisionRows)
 
     const filterOptions: DecisionFilter[] = ['All', 'Required', 'Drafted', 'Accepted', 'Deferred']
 
     const setDecisionStatus = (status: DecisionStatus) => {
       if (!selectedDecision) return
 
-      setDecisionStatuses((current) => ({
-        ...current,
-        [selectedDecision.issueId]: status,
-      }))
-      setIssueDecisionStates((current) => ({
-        ...current,
-        [selectedDecision.issueId]: status,
-      }))
-      setDecisionPersistenceStates((current) => ({
-        ...current,
-        [selectedDecision.issueId]: 'Pending save',
-      }))
-      addAuditEvent({
-        type: 'Decision',
-        title: status === 'Accepted' ? 'Decision accepted' : 'Decision drafted',
-        relatedTo: selectedDecision.issueTitle,
-        summary: `${selectedDecision.issueTitle} decision changed from ${selectedDecision.status} to ${status}.`,
-        detail: 'Local audit event created from Decisions. It captures the decision status change without writing to a backend.',
+      const nextWorkflowState = setWorkflowDecisionStatus(selectedDecision, status, {
+        issueDecisionStates,
+        decisionStatuses,
+        decisionPersistenceStates,
       })
+
+      setDecisionStatuses(nextWorkflowState.decisionStatuses)
+      setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
+      setDecisionPersistenceStates(nextWorkflowState.decisionPersistenceStates)
+      addAuditEvent(nextWorkflowState.auditEvent)
     }
 
     return (
@@ -1263,30 +1505,9 @@ export default function App() {
   }
 
   const renderOutputStep = () => {
-    const decisionRows = decisionRecords.map((record) => ({
-      ...record,
-      status: resolveDecisionStatus(record, issueDecisionStates, decisionStatuses),
-    }))
-
-    const outputRows = outputItems.map((item) => {
-      const linkedDecision = item.linkedIssueId
-        ? findDecisionForIssue(decisionRows, item.linkedIssueId)
-        : undefined
-
-      const derivedStatus = getOutputStatusFromDecision(linkedDecision?.status)
-
-      return {
-        ...item,
-        linkedDecision,
-        status: outputStatuses[item.id] ?? derivedStatus,
-      }
-    })
-
-    const filteredOutputItems = outputRows.filter((item) => {
-      if (outputFilter === 'All') return true
-      if (outputFilter === 'Not persisted') return item.auditState === 'Not persisted'
-      return item.status === outputFilter
-    })
+    const decisionRows = getDecisionRows(decisionRecords, issueDecisionStates, decisionStatuses)
+    const outputRows = getOutputRows(outputItems, decisionRows, outputStatuses)
+    const filteredOutputItems = filterOutputItems(outputRows, outputFilter)
 
     const selectedOutputItem =
       filteredOutputItems.find((item) => item.id === activeOutputItemId) ??
@@ -1295,64 +1516,33 @@ export default function App() {
       ? outputPersistenceStates[selectedOutputItem.id] ?? defaultPersistenceState
       : defaultPersistenceState
 
-    const summary = outputRows.reduce(
-      (acc, item) => {
-        if (item.status === 'Ready') acc.ready += 1
-        if (item.status === 'Blocked') acc.blocked += 1
-        if (item.linkedDecision) acc.decisionLinked += 1
-        if (item.auditState === 'Not persisted') acc.notPersisted += 1
-        return acc
-      },
-      { ready: 0, blocked: 0, decisionLinked: 0, notPersisted: 0 },
-    )
+    const summary = summarizeOutputItems(outputRows)
 
     const filterOptions: OutputFilter[] = ['All', 'Ready', 'Blocked', 'Needs decision', 'Not persisted']
     const linkedDecisionLabel = selectedOutputItem?.linkedDecision
       ? `${selectedOutputItem.linkedDecision.issueTitle} (${selectedOutputItem.linkedDecision.status})`
       : 'No accepted decision'
     const canPrepareOutput = selectedOutputItem?.linkedDecision?.status === 'Accepted'
-    const readinessText =
-      selectedOutputItem?.status === 'Ready'
-        ? 'Ready to include in the output artifact.'
-        : selectedOutputItem?.status === 'Blocked'
-          ? 'Blocked from output until the decision changes.'
-          : selectedOutputItem?.status === 'Needs decision'
-            ? 'Waiting for an accepted decision before output can be prepared.'
-            : 'Output item is not persisted and has no settled decision basis yet.'
+    const readinessText = getOutputReadinessText(selectedOutputItem?.status)
     const auditRows = [...localAuditEvents, ...auditEvents]
     const selectedAuditEvent =
       auditRows.find((event) => event.id === activeAuditEventId) ??
       auditRows[0]
-    const auditSummary = auditRows.reduce(
-      (acc, event) => {
-        acc.events += 1
-        if (event.state === 'Not persisted') acc.notPersisted += 1
-        if (event.type === 'Decision') acc.decisionChanges += 1
-        if (event.type === 'Output') acc.outputChanges += 1
-        return acc
-      },
-      { events: 0, notPersisted: 0, decisionChanges: 0, outputChanges: 0 },
-    )
+    const auditSummary = summarizeAuditEvents(auditRows)
 
     const prepareOutput = () => {
       if (!selectedOutputItem) return
-      if (!canPrepareOutput || outputStatuses[selectedOutputItem.id] === 'Ready') return
 
-      setOutputStatuses((current) => ({
-        ...current,
-        [selectedOutputItem.id]: 'Ready',
-      }))
-      setOutputPersistenceStates((current) => ({
-        ...current,
-        [selectedOutputItem.id]: 'Pending save',
-      }))
-      addAuditEvent({
-        type: 'Output',
-        title: 'Output prepared',
-        relatedTo: selectedOutputItem.title,
-        summary: `${selectedOutputItem.title} was prepared as a draft output candidate.`,
-        detail: 'Local audit event created from Output readiness. The output artifact is still not persisted.',
+      const nextWorkflowState = prepareWorkflowOutput(selectedOutputItem, {
+        outputStatuses,
+        outputPersistenceStates,
       })
+
+      if (!nextWorkflowState) return
+
+      setOutputStatuses(nextWorkflowState.outputStatuses)
+      setOutputPersistenceStates(nextWorkflowState.outputPersistenceStates)
+      addAuditEvent(nextWorkflowState.auditEvent)
     }
 
     return (
@@ -1791,7 +1981,7 @@ export default function App() {
       ...connectionTree.Costing,
     ]
     const activeConnectionSections = allConnectionSections
-    const activeConnectionCards = sourceCardTemplates[activeConnectionNodeId] ?? []
+    const activeConnectionCards = connectionCardsByStage[activeConnectionNodeId] ?? []
     const activeConnectionSection = allConnectionSections.find(
       (section) => section.items?.some((item) => item.id === activeConnectionNodeId) || section.id === activeConnectionNodeId,
     )
@@ -1955,6 +2145,8 @@ export default function App() {
                 </dl>
               </aside>
             </section>
+          ) : currentProcessStep === 'Sources' ? (
+            renderSourceNamesStep('Sources', 'Sources catalog', 'This screen lists available source definitions before they are assigned to BOM, Documentation or Costing.', 'Available')
           ) : currentProcessStep === 'Connections' ? (
             <section className="workspace-main-grid">
               <section className="workspace-main card connections-stage">
@@ -2013,7 +2205,15 @@ export default function App() {
                     </div>
 
                     <div className="connections-card-wrap">
-                      <p className="section-label">Active data connections</p>
+                      <div className="connections-card-header">
+                        <div className="connections-card-header-copy">
+                          <p className="section-label">Active data connections</p>
+                          <span className="connections-card-count">Sources in this stage: {activeConnectionCards.length}</span>
+                        </div>
+                        <button type="button" className="table-action" onClick={() => addConnectionCard(activeConnectionNodeId)}>
+                          Add source
+                        </button>
+                      </div>
                       <div className="connections-card-grid">
                         {activeConnectionCards.map((card) => (
                           <article key={card.id} className="connection-source-card">
@@ -2047,22 +2247,84 @@ export default function App() {
                             </dl>
 
                             <div className="connection-source-actions">
-                              <select className="connection-source-select" defaultValue={card.line1Value === 'Not selected' ? '' : card.line1Value}>
-                                <option value="">Choose source</option>
-                                {sourceDefinitions.map((source) => (
-                                  <option key={source.id} value={source.name}>
-                                    {source.name}
-                                  </option>
-                                ))}
-                              </select>
-                              <div className="connection-source-buttons">
-                                <button type="button" className="table-action">Edit</button>
-                                <button type="button" className="table-action">Disconnect</button>
+                              <div className="connection-file-row">
+                                <button
+                                  type="button"
+                                  className="connection-file-picker"
+                                  disabled={card.fileSelectionPending}
+                                  onClick={() => {
+                                    void handleConnectionFileSelection(activeConnectionNodeId, card.id)
+                                  }}
+                                >
+                                  {card.fileSelectionPending ? 'Opening...' : 'Choose file'}
+                                </button>
+                                <p className="connection-file-note">
+                                  {card.fileSelectionPending
+                                    ? 'Opening file dialog...'
+                                    : card.selectedFileName
+                                      ? `Selected: ${card.selectedFileName}`
+                                      : 'No file selected'}
+                                </p>
                               </div>
+
+                              {card.selectedFilePath ? (
+                                <dl className="connection-file-details">
+                                  <div>
+                                    <dt>Name</dt>
+                                    <dd>{card.selectedFileName}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Path</dt>
+                                    <dd>{card.selectedFilePath}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Folder</dt>
+                                    <dd>{card.selectedFileDirectory}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Type</dt>
+                                    <dd>{card.selectedFileExtension || 'No extension'}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Size</dt>
+                                    <dd>{formatFileSize(card.selectedFileSizeBytes ?? 0)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Modified</dt>
+                                    <dd>{card.selectedFileModifiedAt ? formatFileModifiedAt(card.selectedFileModifiedAt) : 'Unknown'}</dd>
+                                  </div>
+                                </dl>
+                              ) : null}
+
+                              {card.fileSelectionError ? (
+                                <p className="connection-file-error">{card.fileSelectionError}</p>
+                              ) : null}
+                            </div>
+
+                            <div className="connection-card-footer">
+                              <button
+                                type="button"
+                                className="table-action connection-remove-button"
+                                onClick={() => removeConnectionCard(activeConnectionNodeId, card.id)}
+                              >
+                                Remove
+                              </button>
                             </div>
                           </article>
                         ))}
                       </div>
+
+                      {activeConnectionCards.length === 0 ? (
+                        <div className="connections-empty-state">
+                          <div>
+                            <h4>No sources in this stage</h4>
+                            <p>Add the first source tile for {activeConnectionMainLabel} &gt; {activeConnectionLabel}.</p>
+                          </div>
+                          <button type="button" className="table-action" onClick={() => addConnectionCard(activeConnectionNodeId)}>
+                            Add source
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </section>
                 </div>
@@ -2089,6 +2351,10 @@ export default function App() {
                     <dd>{sourceDefinitions.length}</dd>
                   </div>
                   <div>
+                    <dt>Sources in stage</dt>
+                    <dd>{activeConnectionCards.length}</dd>
+                  </div>
+                  <div>
                     <dt>Mode</dt>
                     <dd>Manual source assignment</dd>
                   </div>
@@ -2105,6 +2371,8 @@ export default function App() {
             renderReviewStep()
           ) : currentProcessStep === 'Decisions' ? (
             renderDecisionsStep()
+          ) : currentProcessStep === 'AI Assistant' ? (
+            renderSourceNamesStep('AI Assistant', 'AI Assistant workspace', 'This screen is reserved for contextual AI help across sources, issues, decisions and output.', 'Planned')
           ) : (
             renderOutputStep()
           )}

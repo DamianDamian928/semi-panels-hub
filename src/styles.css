@@ -795,6 +795,49 @@ tbody tr:last-child td {
   flex-wrap: wrap;
 }
 
+.review-import-preview {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(97, 155, 244, 0.22);
+  background: rgba(10, 37, 71, 0.28);
+}
+
+.review-import-preview h4 {
+  margin: 0 0 6px;
+  color: #f8fbff;
+  font-size: 16px;
+}
+
+.review-import-preview p {
+  margin: 0;
+  color: #9fb4cf;
+  line-height: 1.45;
+}
+
+.review-import-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.review-import-file {
+  cursor: pointer;
+}
+
+.review-import-file input {
+  display: none;
+}
+
+.review-import-status {
+  color: #77d59f;
+}
+
+.review-import-error {
+  color: #ffb6a8;
+}
+
 .review-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

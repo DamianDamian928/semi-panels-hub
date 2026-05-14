@@ -1,11 +1,12 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
 export type BomStage = 'MATVAR' | 'L1' | 'L2' | 'L3'
-export type ProcessStep = 'Main' | 'Connections' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output'
+export type ProcessStep = 'Main' | 'Sources' | 'Connections' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings-sources' | 'review-editor'
 
 export type SidebarIconName =
   | 'main'
+  | 'sources'
   | 'connections'
   | 'validation'
   | 'normalization'
@@ -13,6 +14,7 @@ export type SidebarIconName =
   | 'review'
   | 'decisions'
   | 'output'
+  | 'aiAssistant'
 
 export type SidebarStepDefinition = {
   step: ProcessStep
@@ -61,7 +63,7 @@ export type ConnectionCard = {
   line1Value: string
   line2Label: string
   line2Value: string
-  status: 'Connected' | 'Connecting' | 'Not connected'
+  status: 'Connected' | 'Connecting' | 'Not connected' | 'Selected'
 }
 
 export type ValidationState = 'Valid' | 'Warning' | 'Error' | 'Not checked'

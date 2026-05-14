@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "helper": "node scripts/local-file-helper.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
