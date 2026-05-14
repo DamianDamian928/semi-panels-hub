@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "api": "node server/api-server.mjs",
     "helper": "node scripts/local-file-helper.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview"

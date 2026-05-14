@@ -44,9 +44,16 @@ export type StepPurposeContent = {
 export type SourceDefinition = {
   id: string
   name: string
-  type: string
+  type: 'File' | 'Folder' | 'SQL' | 'SharePoint' | 'Manual export'
   location: string
   scope: string
+  status: 'Ready' | 'Needs location' | 'Needs check' | 'Error'
+  usedFor: Array<'BOM' | 'Documentation' | 'Costing'>
+  expectedFormat: string
+  lastChecked: string
+  owner: string
+  description: string
+  accessMode: 'Read-only'
 }
 
 export type ConnectionTreeSection = {

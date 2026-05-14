@@ -1,14 +1,4 @@
-import type {
-  AuditEvent,
-  DashboardRow,
-  DecisionRecord,
-  OutputItem,
-  ReviewIssue,
-  SourceDefinition,
-  ValidationState,
-} from './types'
-
-export const dashboardRows: DashboardRow[] = [
+export const reviews = [
   {
     id: '1',
     intelModel: 'SEMI-0001',
@@ -32,7 +22,7 @@ export const dashboardRows: DashboardRow[] = [
   },
 ]
 
-export const sourceDefinitions: SourceDefinition[] = [
+export const sources = [
   {
     id: '1',
     name: 'Fishbowl export',
@@ -133,7 +123,7 @@ export const sourceDefinitions: SourceDefinition[] = [
   },
 ]
 
-export const validationStatesBySource: Record<string, { state: ValidationState; message: string }> = {
+export const validationStatesBySource = {
   'Fishbowl export': { state: 'Valid', message: 'Source checked and ready.' },
   'Mass Production costing': { state: 'Warning', message: 'Imported with minor gaps to review.' },
   'Parts&BOM': { state: 'Valid', message: 'Structure looks correct.' },
@@ -143,7 +133,7 @@ export const validationStatesBySource: Record<string, { state: ValidationState; 
   'MATVAR file': { state: 'Not checked', message: 'MATVAR export location has not been selected yet.' },
 }
 
-export const reviewIssues: ReviewIssue[] = [
+export const reviewIssues = [
   {
     id: 'issue-001',
     title: 'Missing component in L1 BOM',
@@ -216,7 +206,7 @@ export const reviewIssues: ReviewIssue[] = [
   },
 ]
 
-export const decisionRecords: DecisionRecord[] = [
+export const decisionRecords = [
   {
     issueId: 'issue-001',
     issueTitle: 'Missing component in L1 BOM',
@@ -289,7 +279,7 @@ export const decisionRecords: DecisionRecord[] = [
   },
 ]
 
-export const outputItems: OutputItem[] = [
+export const outputItems = [
   {
     id: 'output-l1-bom',
     title: 'L1 BOM update package',
@@ -357,7 +347,7 @@ export const outputItems: OutputItem[] = [
   },
 ]
 
-export const auditEvents: AuditEvent[] = [
+export const auditEvents = [
   {
     id: 'audit-001',
     type: 'Issue',

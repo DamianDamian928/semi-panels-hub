@@ -3,13 +3,6 @@ import type { ChangeEvent, ReactNode, SVGProps } from 'react'
 import { parseDelimitedReviewSnapshot } from './adapters/readOnlyReviewAdapter'
 import type { ReviewIssueAdapterResult } from './adapters/readOnlyReviewAdapter'
 import {
-  createLocalAuditEvent,
-  markIssueForDecision,
-  prepareWorkflowOutput,
-  setWorkflowDecisionStatus,
-} from './domain/workflowActions'
-import type { AuditEventDraft } from './domain/workflowActions'
-import {
   filterDecisions,
   filterOutputItems,
   filterReviewIssues,
@@ -22,14 +15,14 @@ import {
   summarizeOutputItems,
   summarizeReviewIssues,
 } from './domain/workflowSelectors'
+import type { TechnicalStatus } from './apiClient'
+import { useTechnicalStatus } from './hooks/useTechnicalStatus'
+import { useWorkflowData } from './hooks/useWorkflowData'
 import {
-  auditEvents,
-  dashboardRows,
-  decisionRecords,
-  outputItems,
-  reviewIssues,
-  sourceDefinitions,
-  validationStatesBySource,
+  decisionRecords as fallbackDecisionRecords,
+  outputItems as fallbackOutputItems,
+  reviewIssues as fallbackReviewIssues,
+  sourceDefinitions as fallbackSourceDefinitions,
 } from './mockData'
 import {
   defaultPersistenceState,
@@ -38,17 +31,13 @@ import {
 } from './workflowModel'
 import type {
   AppView,
-  AuditEvent,
   BomStage,
   ConnectionCard,
   ConnectionTreeSection,
   DecisionFilter,
-  DecisionState,
   DecisionStatus,
   MainStage,
   OutputFilter,
-  OutputStatus,
-  PersistenceState,
   ProcessStep,
   ReviewIssueFilter,
   ReviewStatus,
@@ -224,6 +213,58 @@ function BrandGlyph(props: SVGProps<SVGSVGElement>) {
       <path d="M4 10 16 4l12 6-12 6L4 10Z" fill="url(#brandGradient)" />
       <path d="M6.5 16 16 11.2 25.5 16 16 20.8 6.5 16Z" fill="url(#brandGradient)" opacity="0.82" />
       <path d="M9 21.5 16 18l7 3.5-7 3.5-7-3.5Z" fill="url(#brandGradient)" opacity="0.68" />
+    </svg>
+  )
+}
+
+function SourceTypeGlyph({ type, className, ...props }: { type: string; className?: string } & SVGProps<SVGSVGElement>) {
+  const common = {
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  }
+
+  const glyph =
+    type === 'Folder' ? (
+      <>
+        <path d="M3.5 7.5h6l1.7 2h9.3v8.2a2.3 2.3 0 0 1-2.3 2.3H5.8a2.3 2.3 0 0 1-2.3-2.3V7.5Z" />
+        <path d="M3.5 9.5h17" />
+      </>
+    ) : type === 'SQL' ? (
+      <>
+        <path d="M5 6.5c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z" />
+        <path d="M5 6.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
+        <path d="M5 11.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
+      </>
+    ) : type === 'SharePoint' ? (
+      <>
+        <path d="M8 7.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
+        <path d="M17 13a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
+        <path d="M8 22.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
+        <path d="m10.5 6.8 4 2.2" />
+        <path d="m14.4 12.1-4 5.2" />
+      </>
+    ) : type === 'Manual export' ? (
+      <>
+        <path d="M12 3v10" />
+        <path d="m8 9 4 4 4-4" />
+        <path d="M5 17h14" />
+        <path d="M7 21h10" />
+      </>
+    ) : (
+      <>
+        <path d="M7 3.5h7l3 3v14H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z" />
+        <path d="M14 3.5V7h3.5" />
+        <path d="M8.5 12h7" />
+        <path d="M8.5 15.5h5" />
+      </>
+    )
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...props}>
+      <g {...common}>{glyph}</g>
     </svg>
   )
 }
@@ -621,28 +662,182 @@ const activeStepByStatus: Record<ReviewStatus, ProcessStep> = {
   Completed: 'Output',
 }
 
+const technicalRuntimeNotes = [
+  { label: 'Frontend dev', value: 'npm run dev' },
+  { label: 'Backend API', value: 'npm run api' },
+  { label: 'Build check', value: 'npm run build' },
+  { label: 'Local file helper', value: 'npm run helper' },
+]
+
+const formatTechnicalTimestamp = (value?: string) => {
+  if (!value) return 'Waiting for API'
+
+  return new Date(value).toLocaleString()
+}
+
+const formatUptime = (seconds?: number) => {
+  if (seconds === undefined) return 'Waiting for API'
+
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+
+  if (minutes < 1) return `${remainingSeconds}s`
+  return `${minutes}m ${remainingSeconds}s`
+}
+
+const buildTechnicalRuntimeNotes = (status: TechnicalStatus | null) => {
+  if (!status) return technicalRuntimeNotes
+
+  return [
+    { label: 'Frontend dev', value: status.commands.dev },
+    { label: 'Backend API', value: status.commands.api },
+    { label: 'Build check', value: status.commands.build },
+    { label: 'Local file helper', value: status.commands.helper },
+  ]
+}
+
+type DiagnosticTone = 'OK' | 'WARN' | 'INFO' | 'OFFLINE'
+
+type DiagnosticRow = {
+  label: string
+  value: string
+  tone: DiagnosticTone
+  detail: string
+}
+
+const buildDiagnosticSections = (
+  status: TechnicalStatus | null,
+  error: string | null,
+): Array<{ title: string; rows: DiagnosticRow[] }> => {
+  if (!status) {
+    return [
+      {
+        title: 'Runtime',
+        rows: [
+          {
+            label: 'API',
+            value: error ? 'OFFLINE' : 'LOADING',
+            tone: error ? 'OFFLINE' as const : 'INFO' as const,
+            detail: error ?? 'Waiting for /api/technical-status',
+          },
+        ],
+      },
+    ]
+  }
+
+  return [
+    {
+      title: 'Runtime',
+      rows: [
+        { label: 'API', value: 'ONLINE', tone: 'OK' as const, detail: status.backend.baseUrl },
+        { label: 'Node', value: status.backend.runtime, tone: 'INFO' as const, detail: status.backend.service },
+        { label: 'Uptime', value: formatUptime(status.backend.uptimeSeconds), tone: 'INFO' as const, detail: `${status.backend.host}:${status.backend.port}` },
+        { label: 'Environment', value: status.app.environment, tone: 'INFO' as const, detail: status.app.name },
+      ],
+    },
+    {
+      title: 'Frontend',
+      rows: [
+        { label: 'React', value: status.frontend.frameworkVersion, tone: 'INFO' as const, detail: status.frontend.framework },
+        { label: 'TypeScript', value: status.frontend.typeScriptVersion, tone: 'INFO' as const, detail: status.frontend.language },
+        { label: 'Vite', value: status.frontend.bundlerVersion, tone: 'INFO' as const, detail: status.frontend.bundler },
+        { label: 'App version', value: status.app.version, tone: 'INFO' as const, detail: status.app.name },
+      ],
+    },
+    {
+      title: 'Repository',
+      rows: [
+        { label: 'Engine', value: status.backend.database.engine, tone: 'OK' as const, detail: 'WAL mode enabled by repository init' },
+        { label: 'DB path', value: status.backend.database.path, tone: 'INFO' as const, detail: 'Local API data store' },
+        { label: 'Sources', value: status.contract.sourcesReadOnly ? 'READ ONLY' : 'MUTABLE', tone: status.contract.sourcesReadOnly ? 'OK' as const : 'WARN' as const, detail: `${status.data.sources} registered sources` },
+      ],
+    },
+    {
+      title: 'Data counts',
+      rows: [
+        { label: 'Reviews', value: String(status.data.reviews), tone: 'INFO' as const, detail: 'Dashboard rows' },
+        { label: 'Validation states', value: String(status.data.validationStates), tone: 'INFO' as const, detail: 'Source readiness records' },
+        { label: 'Review issues', value: String(status.data.reviewIssues), tone: status.workflow.openIssues > 0 ? 'WARN' as const : 'OK' as const, detail: `${status.workflow.openIssues} open` },
+        { label: 'Decisions', value: String(status.data.decisions), tone: 'INFO' as const, detail: `${status.workflow.acceptedDecisions} accepted` },
+        { label: 'Output items', value: String(status.data.outputItems), tone: status.workflow.blockedOutputItems > 0 ? 'WARN' as const : 'OK' as const, detail: `${status.workflow.readyOutputItems} ready / ${status.workflow.blockedOutputItems} blocked` },
+        { label: 'Audit events', value: String(status.data.auditEvents), tone: status.workflow.notPersistedAuditEvents > 0 ? 'WARN' as const : 'OK' as const, detail: `${status.workflow.notPersistedAuditEvents} not persisted` },
+      ],
+    },
+    {
+      title: 'Workflow',
+      rows: [
+        { label: 'Primary unit', value: status.contract.primaryWorkUnit, tone: 'OK' as const, detail: 'Review remains the main work object' },
+        { label: 'Needs decision', value: String(status.workflow.needsDecision), tone: status.workflow.needsDecision > 0 ? 'WARN' as const : 'OK' as const, detail: 'Issue and decision are separated' },
+        { label: 'Resolved', value: String(status.workflow.resolvedIssues), tone: 'OK' as const, detail: 'Review issue state' },
+        { label: 'Output artifact', value: status.contract.outputAsArtifact ? 'ENABLED' : 'DISABLED', tone: status.contract.outputAsArtifact ? 'OK' as const : 'WARN' as const, detail: 'Output is separate from decision' },
+        { label: 'Audit required', value: status.contract.auditRequired ? 'YES' : 'NO', tone: status.contract.auditRequired ? 'OK' as const : 'WARN' as const, detail: 'History / audit obligation' },
+      ],
+    },
+  ]
+}
+
+const buildTechnicalLiveMetrics = (status: TechnicalStatus | null, error: string | null) => {
+  if (!status) {
+    return [
+      { label: 'API status', value: error ? 'Offline' : 'Loading', detail: error ?? 'Waiting for technical status endpoint' },
+      { label: 'Reviews', value: '-', detail: 'No live API snapshot yet' },
+      { label: 'Issues', value: '-', detail: 'No live API snapshot yet' },
+      { label: 'Audit events', value: '-', detail: 'No live API snapshot yet' },
+    ]
+  }
+
+  return [
+    { label: 'API status', value: 'Online', detail: status.backend.baseUrl },
+    { label: 'Reviews', value: String(status.data.reviews), detail: `${status.data.sources} read-only sources` },
+    { label: 'Issues', value: String(status.data.reviewIssues), detail: `${status.workflow.needsDecision} need decision` },
+    { label: 'Audit events', value: String(status.data.auditEvents), detail: `${status.workflow.notPersistedAuditEvents} not persisted` },
+  ]
+}
+
 export default function App() {
   const [isAdmin] = useState(true)
+  const {
+    dashboardRows,
+    sourceDefinitions,
+    validationStatesBySource,
+    reviewIssues,
+    decisionRecords,
+    outputItems,
+    auditEvents,
+    issueDecisionStates,
+    issuePersistenceStates,
+    decisionStatuses,
+    decisionPersistenceStates,
+    outputStatuses,
+    outputPersistenceStates,
+    activeAuditEventId,
+    setActiveAuditEventId,
+    workflowView,
+    localAuditEvents,
+    markIssueForDecision,
+    setDecisionStatus: saveDecisionStatus,
+    prepareOutput: savePreparedOutput,
+  } = useWorkflowData()
   const [appView, setAppView] = useState<AppView>('dashboard')
+  const {
+    technicalStatus,
+    technicalStatusError,
+    technicalStatusRefreshing,
+    technicalStatusFetchedAt,
+    refreshTechnicalStatus,
+  } = useTechnicalStatus(appView === 'settings-sources')
   const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null)
   const [activeMainStage, setActiveMainStage] = useState<MainStage>('BOM')
   const [activeBomStage, setActiveBomStage] = useState<BomStage>('MATVAR')
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStep>('Main')
+  const [activeSourceId, setActiveSourceId] = useState<string>(fallbackSourceDefinitions[0].id)
   const [activeConnectionNodeId, setActiveConnectionNodeId] = useState<string>('matvar')
-  const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0].id)
+  const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(fallbackReviewIssues[0].id)
   const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
-  const [issueDecisionStates, setIssueDecisionStates] = useState<Record<string, DecisionState>>({})
-  const [issuePersistenceStates, setIssuePersistenceStates] = useState<Record<string, PersistenceState>>({})
-  const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0].issueId)
+  const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(fallbackDecisionRecords[0].issueId)
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
-  const [decisionStatuses, setDecisionStatuses] = useState<Record<string, DecisionStatus>>({})
-  const [decisionPersistenceStates, setDecisionPersistenceStates] = useState<Record<string, PersistenceState>>({})
-  const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0].id)
+  const [activeOutputItemId, setActiveOutputItemId] = useState<string>(fallbackOutputItems[0].id)
   const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
-  const [outputStatuses, setOutputStatuses] = useState<Record<string, OutputStatus>>({})
-  const [outputPersistenceStates, setOutputPersistenceStates] = useState<Record<string, PersistenceState>>({})
-  const [activeAuditEventId, setActiveAuditEventId] = useState<string>(auditEvents[0].id)
-  const [localAuditEvents, setLocalAuditEvents] = useState<AuditEvent[]>([])
   const [reviewImportPreview, setReviewImportPreview] = useState<ReviewIssueAdapterResult | null>(null)
   const [reviewImportError, setReviewImportError] = useState<string | null>(null)
   const [connectionCardsByStage, setConnectionCardsByStage] = useState<Record<string, EditableConnectionCard[]>>(() =>
@@ -658,16 +853,18 @@ export default function App() {
     () => dashboardRows.find((row) => row.id === selectedReviewId) ?? null,
     [selectedReviewId],
   )
-
-  const addAuditEvent = (event: AuditEventDraft) => {
-    const nextEvent = createLocalAuditEvent(event, {
-      id: `audit-local-${Date.now()}`,
-      actor: selectedReview?.owner ?? 'Damian',
-    })
-
-    setLocalAuditEvents((current) => [nextEvent, ...current])
-    setActiveAuditEventId(nextEvent.id)
-  }
+  const currentTechnicalRuntimeNotes = useMemo(
+    () => buildTechnicalRuntimeNotes(technicalStatus),
+    [technicalStatus],
+  )
+  const diagnosticSections = useMemo(
+    () => buildDiagnosticSections(technicalStatus, technicalStatusError),
+    [technicalStatus, technicalStatusError],
+  )
+  const technicalLiveMetrics = useMemo(
+    () => buildTechnicalLiveMetrics(technicalStatus, technicalStatusError),
+    [technicalStatus, technicalStatusError],
+  )
 
   const addConnectionCard = (stageId: string) => {
     setConnectionCardsByStage((current) => {
@@ -871,6 +1068,160 @@ export default function App() {
     setAppView('review-editor')
   }
 
+  const renderSourcesStep = () => {
+    const selectedSource =
+      sourceDefinitions.find((source) => source.id === activeSourceId) ?? sourceDefinitions[0]
+    const readyCount = sourceDefinitions.filter((source) => source.status === 'Ready').length
+    const needsLocationCount = sourceDefinitions.filter((source) => source.status === 'Needs location').length
+    const typeCount = new Set(sourceDefinitions.map((source) => source.type)).size
+    const statusToneClass = selectedSource.status.toLowerCase().replace(/\s+/g, '-')
+
+    return (
+      <section className="sources-registry-grid">
+        <section className="workspace-main card sources-registry-main">
+          <div className="sources-registry-header">
+            <div>
+              <p className="section-label">Sources</p>
+              <h3>Source registry</h3>
+              <p>Read-only list of files, folders and SQL connections that can be connected later to BOM analysis steps.</p>
+            </div>
+            <div className="sources-registry-actions" aria-label="Source actions">
+              <button type="button" className="secondary-button source-action-button" disabled>
+                Add source
+              </button>
+              <button type="button" className="secondary-button source-action-button" disabled>
+                Check sources
+              </button>
+            </div>
+          </div>
+
+          <div className="source-summary-grid" aria-label="Source registry summary">
+            <article className="source-summary-card">
+              <span>Total sources</span>
+              <strong>{sourceDefinitions.length}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Ready</span>
+              <strong>{readyCount}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Needs location</span>
+              <strong>{needsLocationCount}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Connection types</span>
+              <strong>{typeCount}</strong>
+            </article>
+          </div>
+
+          <div className="source-registry-list" aria-label="Registered sources">
+            <div className="source-registry-list-head" aria-hidden="true">
+              <span>Source</span>
+              <span>Type</span>
+              <span>Used for</span>
+              <span>Status</span>
+            </div>
+            {sourceDefinitions.map((source) => {
+              const isActive = source.id === selectedSource.id
+              const sourceStatusClass = source.status.toLowerCase().replace(/\s+/g, '-')
+
+              return (
+                <button
+                  key={source.id}
+                  type="button"
+                  className={`source-registry-row ${isActive ? 'source-registry-row-active' : ''}`}
+                  onClick={() => setActiveSourceId(source.id)}
+                >
+                  <span className="source-registry-name">
+                    <span className={`source-type-icon source-type-icon-${source.type.toLowerCase().replace(/\s+/g, '-')}`}>
+                      <SourceTypeGlyph type={source.type} className="source-type-glyph" />
+                    </span>
+                    <span>
+                      <strong>{source.name}</strong>
+                      <small>{source.location}</small>
+                    </span>
+                  </span>
+                  <span>{source.type}</span>
+                  <span className="source-used-for">
+                    {source.usedFor.map((scope) => (
+                      <span key={scope}>{scope}</span>
+                    ))}
+                  </span>
+                  <span className={`source-status source-status-${sourceStatusClass}`}>
+                    <span className="source-status-dot" />
+                    {source.status}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <aside className="workspace-side-panel card source-detail-panel" aria-label="Selected source details">
+          <div className="sidebar-header">
+            <p className="section-label">Selected source</p>
+            <h2>{selectedSource.name}</h2>
+            <p>{selectedSource.description}</p>
+          </div>
+
+          <section className="source-detail-identity" aria-label="Source type">
+            <span className={`source-type-icon source-type-icon-large source-type-icon-${selectedSource.type.toLowerCase().replace(/\s+/g, '-')}`}>
+              <SourceTypeGlyph type={selectedSource.type} className="source-type-glyph" />
+            </span>
+            <div>
+              <span className={`source-status source-status-${statusToneClass}`}>
+                <span className="source-status-dot" />
+                {selectedSource.status}
+              </span>
+              <p>{selectedSource.type} source · {selectedSource.accessMode}</p>
+            </div>
+          </section>
+
+          <dl className="source-meta-list">
+            <div>
+              <dt>Location</dt>
+              <dd>{selectedSource.location}</dd>
+            </div>
+            <div>
+              <dt>Expected format</dt>
+              <dd>{selectedSource.expectedFormat}</dd>
+            </div>
+            <div>
+              <dt>Used for</dt>
+              <dd>{selectedSource.usedFor.join(', ')}</dd>
+            </div>
+            <div>
+              <dt>Last checked</dt>
+              <dd>{selectedSource.lastChecked}</dd>
+            </div>
+            <div>
+              <dt>Owner</dt>
+              <dd>{selectedSource.owner}</dd>
+            </div>
+            <div>
+              <dt>Mode</dt>
+              <dd>{selectedSource.accessMode}</dd>
+            </div>
+          </dl>
+
+          <section className="source-detail-note">
+            <p className="section-label">Registry rule</p>
+            <p>Sources are registered here only. Mapping to MATVAR, L1, L2, L3, Documentation or Costing happens in Connections.</p>
+          </section>
+
+          <div className="source-detail-actions">
+            <button type="button" className="secondary-button" disabled>
+              Choose location
+            </button>
+            <button type="button" className="secondary-button" disabled>
+              Test access
+            </button>
+          </div>
+        </aside>
+      </section>
+    )
+  }
+
   const renderSourceNamesStep = (
     stepName: Exclude<ProcessStep, 'Main' | 'Connections'>,
     title: string,
@@ -937,14 +1288,14 @@ export default function App() {
 
   const renderComparisonStep = () => {
     const comparisonRows = sourceDefinitions.map((source) => {
-      if (source.name === 'Fishbowl') {
+      if (source.name === 'Fishbowl export') {
         return { id: source.id, name: source.name, status: 'Matched', comparedWith: 'Parts&BOM', message: 'No key BOM differences detected in this placeholder view.' }
       }
-      if (source.name === 'Mass Production') {
+      if (source.name === 'Mass Production costing') {
         return { id: source.id, name: source.name, status: 'Needs review', comparedWith: 'PLM SQL connection', message: 'A few values would need comparison review here later.' }
       }
       if (source.name === 'Parts&BOM') {
-        return { id: source.id, name: source.name, status: 'Matched', comparedWith: 'Fishbowl', message: 'Ready for comparison baseline in this placeholder view.' }
+        return { id: source.id, name: source.name, status: 'Matched', comparedWith: 'Fishbowl export', message: 'Ready for comparison baseline in this placeholder view.' }
       }
       if (source.name === 'BOX documentation') {
         return { id: source.id, name: source.name, status: 'Missing link', comparedWith: 'Sharepoint documentation', message: 'Comparison cannot be completed until documentation is connected.' }
@@ -952,7 +1303,7 @@ export default function App() {
       if (source.name === 'Sharepoint documentation') {
         return { id: source.id, name: source.name, status: 'Pending', comparedWith: 'BOX documentation', message: 'Waiting for full comparison setup.' }
       }
-      return { id: source.id, name: source.name, status: 'Ready', comparedWith: 'Mass Production', message: 'Connection is ready to support future comparison rules.' }
+      return { id: source.id, name: source.name, status: 'Ready', comparedWith: 'Mass Production costing', message: 'Connection is ready to support future comparison rules.' }
     })
 
     const summary = comparisonRows.reduce(
@@ -1052,14 +1403,19 @@ export default function App() {
 
   const renderReviewStep = () => {
     const reviewIssueSource = reviewImportPreview?.issues.length ? reviewImportPreview.issues : reviewIssues
-    const issueRows = getReviewIssueRows(reviewIssueSource, decisionRecords, issueDecisionStates, decisionStatuses)
+    const usesImportedPreview = Boolean(reviewImportPreview?.issues.length)
+    const issueRows = usesImportedPreview
+      ? getReviewIssueRows(reviewIssueSource, decisionRecords, issueDecisionStates, decisionStatuses)
+      : workflowView?.review.issueRows ?? getReviewIssueRows(reviewIssueSource, decisionRecords, issueDecisionStates, decisionStatuses)
     const filteredIssues = filterReviewIssues(issueRows, reviewIssueFilter)
 
     const selectedIssue =
       filteredIssues.find((issue) => issue.id === activeReviewIssueId) ??
       filteredIssues[0]
 
-    const summary = summarizeReviewIssues(issueRows)
+    const summary = usesImportedPreview
+      ? summarizeReviewIssues(issueRows)
+      : workflowView?.review.summary ?? summarizeReviewIssues(issueRows)
 
     const filterOptions: ReviewIssueFilter[] = ['All', 'Open', 'Needs decision', 'Resolved']
     const selectedDecision = selectedIssue?.decision ?? 'None'
@@ -1076,19 +1432,12 @@ export default function App() {
           ? 'Not marked yet'
           : 'Decision already linked'
 
-    const markForDecision = () => {
+    const markForDecision = async () => {
       if (!selectedIssue) return
 
-      const nextWorkflowState = markIssueForDecision(selectedIssue, {
-        issueDecisionStates,
-        issuePersistenceStates,
-      })
-
-      setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
-      setIssuePersistenceStates(nextWorkflowState.issuePersistenceStates)
+      await markIssueForDecision(selectedIssue)
       setActiveDecisionIssueId(selectedIssue.id)
       setDecisionFilter('All')
-      addAuditEvent(nextWorkflowState.auditEvent)
     }
 
     const goToDecisions = () => {
@@ -1292,7 +1641,7 @@ export default function App() {
   }
 
   const renderDecisionsStep = () => {
-    const decisionRows = getDecisionRows(decisionRecords, issueDecisionStates, decisionStatuses)
+    const decisionRows = workflowView?.decisions.decisionRows ?? getDecisionRows(decisionRecords, issueDecisionStates, decisionStatuses)
     const filteredDecisions = filterDecisions(decisionRows, decisionFilter)
 
     const selectedDecision =
@@ -1305,23 +1654,14 @@ export default function App() {
       ? decisionPersistenceStates[selectedDecision.issueId] ?? defaultPersistenceState
       : defaultPersistenceState
 
-    const summary = summarizeDecisions(decisionRows)
+    const summary = workflowView?.decisions.summary ?? summarizeDecisions(decisionRows)
 
     const filterOptions: DecisionFilter[] = ['All', 'Required', 'Drafted', 'Accepted', 'Deferred']
 
-    const setDecisionStatus = (status: DecisionStatus) => {
+    const setDecisionStatus = async (status: DecisionStatus) => {
       if (!selectedDecision) return
 
-      const nextWorkflowState = setWorkflowDecisionStatus(selectedDecision, status, {
-        issueDecisionStates,
-        decisionStatuses,
-        decisionPersistenceStates,
-      })
-
-      setDecisionStatuses(nextWorkflowState.decisionStatuses)
-      setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
-      setDecisionPersistenceStates(nextWorkflowState.decisionPersistenceStates)
-      addAuditEvent(nextWorkflowState.auditEvent)
+      await saveDecisionStatus(selectedDecision, status)
     }
 
     return (
@@ -1505,8 +1845,8 @@ export default function App() {
   }
 
   const renderOutputStep = () => {
-    const decisionRows = getDecisionRows(decisionRecords, issueDecisionStates, decisionStatuses)
-    const outputRows = getOutputRows(outputItems, decisionRows, outputStatuses)
+    const decisionRows = workflowView?.decisions.decisionRows ?? getDecisionRows(decisionRecords, issueDecisionStates, decisionStatuses)
+    const outputRows = workflowView?.output.outputRows ?? getOutputRows(outputItems, decisionRows, outputStatuses)
     const filteredOutputItems = filterOutputItems(outputRows, outputFilter)
 
     const selectedOutputItem =
@@ -1516,7 +1856,7 @@ export default function App() {
       ? outputPersistenceStates[selectedOutputItem.id] ?? defaultPersistenceState
       : defaultPersistenceState
 
-    const summary = summarizeOutputItems(outputRows)
+    const summary = workflowView?.output.summary ?? summarizeOutputItems(outputRows)
 
     const filterOptions: OutputFilter[] = ['All', 'Ready', 'Blocked', 'Needs decision', 'Not persisted']
     const linkedDecisionLabel = selectedOutputItem?.linkedDecision
@@ -1530,19 +1870,10 @@ export default function App() {
       auditRows[0]
     const auditSummary = summarizeAuditEvents(auditRows)
 
-    const prepareOutput = () => {
+    const prepareOutput = async () => {
       if (!selectedOutputItem) return
 
-      const nextWorkflowState = prepareWorkflowOutput(selectedOutputItem, {
-        outputStatuses,
-        outputPersistenceStates,
-      })
-
-      if (!nextWorkflowState) return
-
-      setOutputStatuses(nextWorkflowState.outputStatuses)
-      setOutputPersistenceStates(nextWorkflowState.outputPersistenceStates)
-      addAuditEvent(nextWorkflowState.auditEvent)
+      await savePreparedOutput(selectedOutputItem)
     }
 
     return (
@@ -1904,62 +2235,102 @@ export default function App() {
         <header className="page-header page-header-row">
           <div>
             <p className="eyebrow">Semi Panels Hub</p>
-            <h1>Settings / Sources</h1>
-            <p className="page-subtitle">One global source library for the whole app. Define once, reuse in all projects.</p>
+            <h1>Settings / Diagnostics</h1>
+            <p className="page-subtitle">Live technical status from the local API and workflow repository.</p>
           </div>
           <div className="header-actions">
+            <button
+              type="button"
+              className="header-button"
+              onClick={() => {
+                void refreshTechnicalStatus()
+              }}
+              disabled={technicalStatusRefreshing}
+            >
+              {technicalStatusRefreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
             <button type="button" className="header-button" onClick={() => setAppView('dashboard')}>
               ← Dashboard
             </button>
           </div>
         </header>
 
-        <main className="page-content settings-layout">
-          <section className="card settings-intro-card">
-            <div className="settings-intro-grid">
+        <main className="page-content settings-layout diagnostic-layout">
+          <section className="diagnostic-toolbar" aria-label="Diagnostic status">
+            <div className="diagnostic-toolbar-main">
+              <span className={`diagnostic-led ${technicalStatus ? 'diagnostic-led-ok' : 'diagnostic-led-warn'}`} />
               <div>
-                <p className="section-label">Global library</p>
-                <h3>Sources are configured here only once</h3>
-                <p className="helper-text">
-                  Excel, PDF, SQL and other sources will live here. Projects will only create connections to these global items.
-                </p>
-              </div>
-              <div className="settings-note-box">
-                <strong>Important</strong>
-                <span>Connections in projects use this shared source library. No repeated local file picking per project.</span>
+                <strong>{technicalStatus ? 'API ONLINE' : technicalStatusError ? 'API OFFLINE' : 'API CHECKING'}</strong>
+                <span>{technicalStatus?.backend.baseUrl ?? 'http://127.0.0.1:8788'}</span>
               </div>
             </div>
+            <div className="diagnostic-toolbar-meta">
+              <span>API snapshot</span>
+              <strong>{formatTechnicalTimestamp(technicalStatus?.generatedAt)}</strong>
+            </div>
+            <div className="diagnostic-toolbar-meta">
+              <span>UI fetched</span>
+              <strong>{formatTechnicalTimestamp(technicalStatusFetchedAt ?? undefined)}</strong>
+            </div>
+            <div className="diagnostic-toolbar-meta">
+              <span>Mode</span>
+              <strong>Read-only diagnostics</strong>
+            </div>
+            {technicalStatusError ? <p className="diagnostic-error">{technicalStatusError}</p> : null}
           </section>
 
-          <section className="card">
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Type</th>
-                    <th>Location</th>
-                    <th>Scope</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sourceDefinitions.map((source) => (
-                    <tr key={source.id}>
-                      <td>{source.name}</td>
-                      <td>{source.type}</td>
-                      <td>{source.location}</td>
-                      <td>{source.scope}</td>
-                      <td>
-                        <button type="button" className="table-action">
-                          Edit
-                        </button>
-                      </td>
-                    </tr>
+          <section className="diagnostic-summary-grid" aria-label="Live application status">
+            {technicalLiveMetrics.map((metric) => (
+              <article key={metric.label} className="diagnostic-summary-card">
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+                <p>{metric.detail}</p>
+              </article>
+            ))}
+          </section>
+
+          <section className="diagnostic-grid" aria-label="Diagnostic tables">
+            {diagnosticSections.map((section) => (
+              <article key={section.title} className="diagnostic-panel">
+                <header className="diagnostic-panel-header">
+                  <h2>{section.title}</h2>
+                  <span>{section.rows.length} checks</span>
+                </header>
+                <div className="diagnostic-table" role="table" aria-label={`${section.title} diagnostics`}>
+                  <div className="diagnostic-row diagnostic-row-head" role="row">
+                    <span role="columnheader">Check</span>
+                    <span role="columnheader">Value</span>
+                    <span role="columnheader">State</span>
+                    <span role="columnheader">Details</span>
+                  </div>
+                  {section.rows.map((row) => (
+                    <div key={`${section.title}-${row.label}`} className="diagnostic-row" role="row">
+                      <span role="cell">{row.label}</span>
+                      <strong role="cell">{row.value}</strong>
+                      <span role="cell" className={`diagnostic-state diagnostic-state-${row.tone.toLowerCase()}`}>
+                        {row.tone}
+                      </span>
+                      <span role="cell">{row.detail}</span>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              </article>
+            ))}
+          </section>
+
+          <section className="diagnostic-panel diagnostic-panel-wide" aria-label="Developer commands">
+            <header className="diagnostic-panel-header">
+              <h2>Commands</h2>
+              <span>{currentTechnicalRuntimeNotes.length} entries</span>
+            </header>
+            <dl className="diagnostic-command-table">
+              {currentTechnicalRuntimeNotes.map((note) => (
+                <div key={note.label}>
+                  <dt>{note.label}</dt>
+                  <dd>{note.value}</dd>
+                </div>
+              ))}
+            </dl>
           </section>
         </main>
       </div>
@@ -2146,7 +2517,7 @@ export default function App() {
               </aside>
             </section>
           ) : currentProcessStep === 'Sources' ? (
-            renderSourceNamesStep('Sources', 'Sources catalog', 'This screen lists available source definitions before they are assigned to BOM, Documentation or Costing.', 'Available')
+            renderSourcesStep()
           ) : currentProcessStep === 'Connections' ? (
             <section className="workspace-main-grid">
               <section className="workspace-main card connections-stage">

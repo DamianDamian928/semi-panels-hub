@@ -1,0 +1,274 @@
+import { existsSync, mkdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
+import {
+  auditEvents,
+  decisionRecords,
+  outputItems,
+  reviewIssues,
+  reviews,
+  sources,
+  validationStatesBySource,
+} from './seedData.mjs'
+import { buildWorkflowView } from './workflowViewModel.mjs'
+
+const serverDirectory = dirname(fileURLToPath(import.meta.url))
+const dataDirectory = process.env.API_DATA_DIR ?? join(serverDirectory, 'data')
+
+if (!existsSync(dataDirectory)) {
+  mkdirSync(dataDirectory, { recursive: true })
+}
+
+export const databasePath = process.env.API_DB_PATH ?? join(dataDirectory, 'semi-panels-hub.sqlite')
+
+const db = new DatabaseSync(databasePath)
+
+db.exec(`
+  PRAGMA journal_mode = WAL;
+  PRAGMA foreign_keys = ON;
+
+  CREATE TABLE IF NOT EXISTS app_records (
+    collection TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (collection, record_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS workflow_state (
+    kind TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (kind, record_id)
+  );
+`)
+
+const countRecordsStatement = db.prepare('SELECT COUNT(*) AS count FROM app_records WHERE collection = ?')
+const insertRecordStatement = db.prepare(`
+  INSERT INTO app_records (collection, record_id, payload, position)
+  VALUES (?, ?, ?, ?)
+`)
+const listRecordsStatement = db.prepare(`
+  SELECT payload
+  FROM app_records
+  WHERE collection = ?
+  ORDER BY position ASC, record_id ASC
+`)
+const getRecordStatement = db.prepare(`
+  SELECT payload
+  FROM app_records
+  WHERE collection = ? AND record_id = ?
+`)
+const updateRecordStatement = db.prepare(`
+  UPDATE app_records
+  SET payload = ?
+  WHERE collection = ? AND record_id = ?
+`)
+const listStateStatement = db.prepare(`
+  SELECT record_id, value
+  FROM workflow_state
+  WHERE kind = ?
+`)
+const setStateStatement = db.prepare(`
+  INSERT INTO workflow_state (kind, record_id, value)
+  VALUES (?, ?, ?)
+  ON CONFLICT(kind, record_id) DO UPDATE SET value = excluded.value
+`)
+const nextAuditPositionStatement = db.prepare(`
+  SELECT COALESCE(MIN(position), 0) - 1 AS position
+  FROM app_records
+  WHERE collection = 'audit_events'
+`)
+
+const serialize = (value) => JSON.stringify(value)
+const parse = (value) => JSON.parse(value)
+
+const insertSeedCollection = (collection, records, getRecordId) => {
+  records.forEach((record, index) => {
+    insertRecordStatement.run(collection, getRecordId(record), serialize(record), index)
+  })
+}
+
+const seedIfNeeded = () => {
+  const { count } = countRecordsStatement.get('reviews')
+  if (count > 0) return
+
+  db.exec('BEGIN')
+
+  try {
+    insertSeedCollection('reviews', reviews, (record) => record.id)
+    insertSeedCollection('sources', sources, (record) => record.id)
+    insertSeedCollection('review_issues', reviewIssues, (record) => record.id)
+    insertSeedCollection('decision_records', decisionRecords, (record) => record.issueId)
+    insertSeedCollection('output_items', outputItems, (record) => record.id)
+    insertSeedCollection('audit_events', auditEvents, (record) => record.id)
+    insertSeedCollection(
+      'validation_states',
+      Object.entries(validationStatesBySource).map(([sourceName, value]) => ({
+        sourceName,
+        ...value,
+      })),
+      (record) => record.sourceName,
+    )
+
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+seedIfNeeded()
+
+const listRecords = (collection) => listRecordsStatement.all(collection).map((row) => parse(row.payload))
+
+const getRecord = (collection, id) => {
+  const row = getRecordStatement.get(collection, id)
+  return row ? parse(row.payload) : undefined
+}
+
+const updateRecord = (collection, id, payload) => {
+  updateRecordStatement.run(serialize(payload), collection, id)
+}
+
+const getStateMap = (kind) =>
+  Object.fromEntries(listStateStatement.all(kind).map((row) => [row.record_id, row.value]))
+
+const setState = (kind, id, value) => {
+  setStateStatement.run(kind, id, value)
+}
+
+const getValidationStates = () =>
+  Object.fromEntries(
+    listRecords('validation_states').map(({ sourceName, state, message }) => [
+      sourceName,
+      { state, message },
+    ]),
+  )
+
+const addAuditEvent = (event) => {
+  const { position } = nextAuditPositionStatement.get()
+  insertRecordStatement.run('audit_events', event.id, serialize(event), position)
+}
+
+const getWorkflowPayload = () => {
+  const payload = {
+    reviewIssues: listRecords('review_issues'),
+    decisionRecords: listRecords('decision_records'),
+    outputItems: listRecords('output_items'),
+    auditEvents: listRecords('audit_events'),
+    issuePersistenceStates: getStateMap('issue_persistence'),
+    decisionPersistenceStates: getStateMap('decision_persistence'),
+    outputPersistenceStates: getStateMap('output_persistence'),
+    outputStatuses: getStateMap('output_status'),
+  }
+
+  return {
+    ...payload,
+    workflowView: buildWorkflowView(payload),
+  }
+}
+
+const getTechnicalStatus = ({ host, port, packageInfo }) => {
+  const reviews = listRecords('reviews')
+  const sources = listRecords('sources')
+  const validationStates = getValidationStates()
+  const workflowPayload = getWorkflowPayload()
+  const { workflowView } = workflowPayload
+
+  return {
+    generatedAt: new Date().toISOString(),
+    app: {
+      name: packageInfo.name ?? 'semi-panels-hub',
+      version: packageInfo.version ?? 'unknown',
+      environment: process.env.NODE_ENV ?? 'development',
+    },
+    frontend: {
+      framework: 'React',
+      frameworkVersion: packageInfo.dependencies?.react ?? 'unknown',
+      language: 'TypeScript',
+      typeScriptVersion: packageInfo.devDependencies?.typescript ?? 'unknown',
+      bundler: 'Vite',
+      bundlerVersion: packageInfo.devDependencies?.vite ?? 'unknown',
+    },
+    backend: {
+      service: 'Node HTTP API',
+      runtime: `Node ${process.versions.node}`,
+      host,
+      port,
+      baseUrl: `http://${host}:${port}`,
+      uptimeSeconds: Math.round(process.uptime()),
+      database: workflowRepository.getDatabaseInfo(),
+    },
+    data: {
+      reviews: reviews.length,
+      sources: sources.length,
+      validationStates: Object.keys(validationStates).length,
+      reviewIssues: workflowPayload.reviewIssues.length,
+      decisions: workflowPayload.decisionRecords.length,
+      outputItems: workflowPayload.outputItems.length,
+      auditEvents: workflowPayload.auditEvents.length,
+    },
+    workflow: {
+      openIssues: workflowView.review.summary.open,
+      needsDecision: workflowView.review.summary.needsDecision,
+      highSeverityIssues: workflowView.review.summary.highSeverity,
+      resolvedIssues: workflowView.review.summary.resolved,
+      acceptedDecisions: workflowView.decisions.summary.Accepted,
+      readyOutputItems: workflowView.output.summary.ready,
+      blockedOutputItems: workflowView.output.summary.blocked,
+      notPersistedAuditEvents: workflowView.audit.summary.notPersisted,
+    },
+    commands: {
+      dev: packageInfo.scripts?.dev ?? 'npm run dev',
+      api: packageInfo.scripts?.api ?? 'npm run api',
+      build: packageInfo.scripts?.build ?? 'npm run build',
+      helper: packageInfo.scripts?.helper ?? 'npm run helper',
+    },
+    contract: {
+      sourcesReadOnly: true,
+      primaryWorkUnit: 'Review',
+      issueDecisionSeparation: true,
+      outputAsArtifact: true,
+      auditRequired: true,
+    },
+  }
+}
+
+export const workflowRepository = {
+  getDatabaseInfo: () => ({
+    engine: 'sqlite',
+    path: databasePath,
+  }),
+
+  getReviews: () => listRecords('reviews'),
+  getSources: () => listRecords('sources'),
+  getValidationStates: () => getValidationStates(),
+  getReviewIssues: () => listRecords('review_issues'),
+  getDecisionRecords: () => listRecords('decision_records'),
+  getOutputItems: () => listRecords('output_items'),
+  getAuditEvents: () => listRecords('audit_events'),
+  getReview: (reviewId) => getRecord('reviews', reviewId),
+  getIssue: (issueId) => getRecord('review_issues', issueId),
+  updateIssue: (issue) => updateRecord('review_issues', issue.id, issue),
+  getDecision: (issueId) => getRecord('decision_records', issueId),
+  updateDecision: (decision) => updateRecord('decision_records', decision.issueId, decision),
+  getOutputItem: (outputId) => getRecord('output_items', outputId),
+  addAuditEvent,
+  setIssuePersistenceState: (issueId, value) => setState('issue_persistence', issueId, value),
+  setDecisionPersistenceState: (issueId, value) => setState('decision_persistence', issueId, value),
+  setOutputPersistenceState: (outputId, value) => setState('output_persistence', outputId, value),
+  setOutputStatus: (outputId, value) => setState('output_status', outputId, value),
+
+  getWorkflowPayload,
+
+  getTechnicalStatus,
+
+  getBootstrapPayload: () => ({
+    reviews: listRecords('reviews'),
+    sources: listRecords('sources'),
+    validationStatesBySource: getValidationStates(),
+    ...getWorkflowPayload(),
+  }),
+}
