@@ -8,7 +8,7 @@ const port = Number(process.env.LOCAL_FILE_HELPER_PORT ?? 8787)
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 }
 
@@ -21,6 +21,30 @@ const sendJson = (response, statusCode, payload) => {
   })
   response.end(JSON.stringify(payload))
 }
+
+const readJsonBody = (request) =>
+  new Promise((resolve, reject) => {
+    let body = ''
+
+    request.on('data', (chunk) => {
+      body += chunk
+    })
+
+    request.on('end', () => {
+      if (!body) {
+        resolve({})
+        return
+      }
+
+      try {
+        resolve(JSON.parse(body))
+      } catch (error) {
+        reject(error)
+      }
+    })
+
+    request.on('error', reject)
+  })
 
 const openLocalFileDialog = () =>
   new Promise((resolve, reject) => {
@@ -86,6 +110,46 @@ const getLocalFileMetadata = async (filePath) => {
   }
 }
 
+const openLocalLocation = (filePath) =>
+  new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') {
+      reject(new Error('Opening local locations currently supports Windows only.'))
+      return
+    }
+
+    const escapedPath = filePath.replace(/'/g, "''")
+    const script = `
+$path = '${escapedPath}'
+if (Test-Path -LiteralPath $path -PathType Leaf) {
+  Start-Process explorer.exe -ArgumentList ('/select,"' + $path + '"')
+} elseif (Test-Path -LiteralPath $path -PathType Container) {
+  Start-Process explorer.exe -ArgumentList ('"' + $path + '"')
+} else {
+  $parent = Split-Path -LiteralPath $path -Parent
+  if ($parent -and (Test-Path -LiteralPath $parent)) {
+    Start-Process explorer.exe -ArgumentList ('"' + $parent + '"')
+  } else {
+    throw "Local path was not found: $path"
+  }
+}
+`
+    const encodedScript = Buffer.from(script, 'utf16le').toString('base64')
+
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodedScript],
+      { windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr.trim() || error.message))
+          return
+        }
+
+        resolve()
+      },
+    )
+  })
+
 const server = createServer(async (request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, corsHeaders)
@@ -128,6 +192,33 @@ const server = createServer(async (request, response) => {
       })
     } finally {
       activeDialog = false
+    }
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/open-local-location') {
+    let body
+
+    try {
+      body = await readJsonBody(request)
+    } catch {
+      sendJson(response, 400, { error: 'Invalid JSON body' })
+      return
+    }
+
+    if (!body.path || typeof body.path !== 'string') {
+      sendJson(response, 400, { error: 'Local path is required.' })
+      return
+    }
+
+    try {
+      await openLocalLocation(body.path)
+      sendJson(response, 200, { ok: true })
+    } catch (error) {
+      sendJson(response, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Could not open local location.',
+      })
     }
     return
   }

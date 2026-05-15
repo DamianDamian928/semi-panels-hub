@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
 import {
+  ApiRequestError,
+  apiCheckSourceAccess,
+  apiCheckSourcesAccess,
+  apiCreateSource,
+  apiDeleteSource,
   apiMarkIssueForDecision,
   apiPrepareOutput,
+  apiRegisterSourceLocalFile,
   apiSetDecisionStatus,
   fetchBootstrapData,
 } from '../apiClient'
@@ -23,6 +29,7 @@ import {
   validationStatesBySource as fallbackValidationStatesBySource,
 } from '../mockData'
 import type {
+  ApiConnectionState,
   AuditEvent,
   DecisionRecord,
   DecisionState,
@@ -30,7 +37,21 @@ import type {
   OutputStatus,
   PersistenceState,
   ReviewIssue,
+  SourceCreateInput,
+  SourceDefinition,
+  SourceFileMetadata,
 } from '../types'
+
+const getApiFailureState = (error: unknown): ApiConnectionState =>
+  error instanceof ApiRequestError ? 'error' : 'offline'
+
+const getApiFailureMessage = (error: unknown, fallbackMessage: string) => {
+  if (error instanceof ApiRequestError) {
+    return `${fallbackMessage} API responded with status ${error.status ?? 'unknown'}.`
+  }
+
+  return `${fallbackMessage} Backend API is not available.`
+}
 
 export const useWorkflowData = () => {
   const [dashboardRows, setDashboardRows] = useState(fallbackDashboardRows)
@@ -49,6 +70,8 @@ export const useWorkflowData = () => {
   const [activeAuditEventId, setActiveAuditEventId] = useState<string>(fallbackAuditEvents[0].id)
   const [workflowView, setWorkflowView] = useState<WorkflowViewPayload | null>(null)
   const [localAuditEvents, setLocalAuditEvents] = useState<AuditEvent[]>([])
+  const [apiConnectionState, setApiConnectionState] = useState<ApiConnectionState>('loading')
+  const [apiConnectionError, setApiConnectionError] = useState<string | null>(null)
 
   const applyWorkflowPayload = (payload: WorkflowPayload) => {
     setReviewIssues(payload.reviewIssues)
@@ -68,6 +91,13 @@ export const useWorkflowData = () => {
     }
   }
 
+  const applyBootstrapPayload = (data: Awaited<ReturnType<typeof fetchBootstrapData>>) => {
+    setDashboardRows(data.reviews)
+    setSourceDefinitions(data.sources)
+    setValidationStatesBySource(data.validationStatesBySource)
+    applyWorkflowPayload(data)
+  }
+
   useEffect(() => {
     let isMounted = true
 
@@ -75,12 +105,11 @@ export const useWorkflowData = () => {
       .then((data) => {
         if (!isMounted) return
 
-        setDashboardRows(data.reviews)
-        setSourceDefinitions(data.sources)
-        setValidationStatesBySource(data.validationStatesBySource)
-        applyWorkflowPayload(data)
+        applyBootstrapPayload(data)
+        setApiConnectionState('ready')
+        setApiConnectionError(null)
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!isMounted) return
 
         setDashboardRows(fallbackDashboardRows)
@@ -91,6 +120,8 @@ export const useWorkflowData = () => {
         setOutputItems(fallbackOutputItems)
         setAuditEvents(fallbackAuditEvents)
         setWorkflowView(null)
+        setApiConnectionState(getApiFailureState(error))
+        setApiConnectionError(getApiFailureMessage(error, 'Using demo data.'))
       })
 
     return () => {
@@ -108,10 +139,76 @@ export const useWorkflowData = () => {
     setActiveAuditEventId(nextEvent.id)
   }
 
+  const registerSourceLocalFile = async (sourceId: string, file: SourceFileMetadata) => {
+    try {
+      applyBootstrapPayload(await apiRegisterSourceLocalFile(sourceId, file))
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Source location could not be saved.'))
+      throw error
+    }
+  }
+
+  const createSource = async (source: SourceCreateInput): Promise<SourceDefinition[]> => {
+    try {
+      const data = await apiCreateSource(source)
+      applyBootstrapPayload(data)
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+      return data.sources
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Source could not be added.'))
+      throw error
+    }
+  }
+
+  const deleteSource = async (sourceId: string): Promise<SourceDefinition[]> => {
+    try {
+      const data = await apiDeleteSource(sourceId)
+      applyBootstrapPayload(data)
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+      return data.sources
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Source could not be removed.'))
+      throw error
+    }
+  }
+
+  const checkSourcesAccess = async () => {
+    try {
+      applyBootstrapPayload(await apiCheckSourcesAccess())
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Sources access check could not be completed.'))
+      throw error
+    }
+  }
+
+  const checkSourceAccess = async (sourceId: string) => {
+    try {
+      applyBootstrapPayload(await apiCheckSourceAccess(sourceId))
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Source access check could not be completed.'))
+      throw error
+    }
+  }
+
   const markIssueForDecision = async (issue: ReviewIssue) => {
     try {
       applyWorkflowPayload(await apiMarkIssueForDecision(issue.id))
-    } catch {
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
       const nextWorkflowState = markIssueForDecisionLocally(issue, {
         issueDecisionStates,
         issuePersistenceStates,
@@ -120,6 +217,8 @@ export const useWorkflowData = () => {
       setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
       setIssuePersistenceStates(nextWorkflowState.issuePersistenceStates)
       setWorkflowView(null)
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Action was kept as a local pending change.'))
       addLocalAuditEvent(nextWorkflowState.auditEvent)
     }
   }
@@ -127,7 +226,9 @@ export const useWorkflowData = () => {
   const setDecisionStatus = async (decision: DecisionRecord, status: DecisionStatus) => {
     try {
       applyWorkflowPayload(await apiSetDecisionStatus(decision.issueId, status))
-    } catch {
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
       const nextWorkflowState = setWorkflowDecisionStatus(decision, status, {
         issueDecisionStates,
         decisionStatuses,
@@ -138,6 +239,8 @@ export const useWorkflowData = () => {
       setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
       setDecisionPersistenceStates(nextWorkflowState.decisionPersistenceStates)
       setWorkflowView(null)
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Decision was kept as a local pending change.'))
       addLocalAuditEvent(nextWorkflowState.auditEvent)
     }
   }
@@ -145,11 +248,16 @@ export const useWorkflowData = () => {
   const prepareOutput = async (outputItem: OutputRow) => {
     try {
       applyWorkflowPayload(await apiPrepareOutput(outputItem.id))
-    } catch {
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
       const nextWorkflowState = prepareWorkflowOutput(outputItem, {
         outputStatuses,
         outputPersistenceStates,
       })
+
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Output preparation could not be confirmed.'))
 
       if (!nextWorkflowState) return
 
@@ -178,6 +286,13 @@ export const useWorkflowData = () => {
     setActiveAuditEventId,
     workflowView,
     localAuditEvents,
+    apiConnectionState,
+    apiConnectionError,
+    createSource,
+    deleteSource,
+    registerSourceLocalFile,
+    checkSourcesAccess,
+    checkSourceAccess,
     markIssueForDecision,
     setDecisionStatus,
     prepareOutput,

@@ -49,6 +49,22 @@ const insertRecordStatement = db.prepare(`
   INSERT INTO app_records (collection, record_id, payload, position)
   VALUES (?, ?, ?, ?)
 `)
+const upsertRecordStatement = db.prepare(`
+  INSERT INTO app_records (collection, record_id, payload, position)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT(collection, record_id) DO UPDATE SET
+    payload = excluded.payload,
+    position = excluded.position
+`)
+const deleteRecordStatement = db.prepare(`
+  DELETE FROM app_records
+  WHERE collection = ? AND record_id = ?
+`)
+const nextRecordPositionStatement = db.prepare(`
+  SELECT COALESCE(MAX(position), -1) + 1 AS position
+  FROM app_records
+  WHERE collection = ?
+`)
 const listRecordsStatement = db.prepare(`
   SELECT payload
   FROM app_records
@@ -132,11 +148,37 @@ const updateRecord = (collection, id, payload) => {
   updateRecordStatement.run(serialize(payload), collection, id)
 }
 
+const upsertRecord = (collection, id, payload, position) => {
+  upsertRecordStatement.run(collection, id, serialize(payload), position)
+}
+
+const deleteRecord = (collection, id) => {
+  deleteRecordStatement.run(collection, id)
+}
+
 const getStateMap = (kind) =>
   Object.fromEntries(listStateStatement.all(kind).map((row) => [row.record_id, row.value]))
 
 const setState = (kind, id, value) => {
   setStateStatement.run(kind, id, value)
+}
+
+const updateValidationState = (sourceName, value) => {
+  const existingRecord = getRecord('validation_states', sourceName)
+  const position = existingRecord ? undefined : nextRecordPositionStatement.get('validation_states').position
+
+  if (existingRecord) {
+    updateRecord('validation_states', sourceName, {
+      sourceName,
+      ...value,
+    })
+    return
+  }
+
+  upsertRecord('validation_states', sourceName, {
+    sourceName,
+    ...value,
+  }, position)
 }
 
 const getValidationStates = () =>
@@ -244,7 +286,16 @@ export const workflowRepository = {
 
   getReviews: () => listRecords('reviews'),
   getSources: () => listRecords('sources'),
+  getSource: (sourceId) => getRecord('sources', sourceId),
+  addSource: (source) => {
+    const { position } = nextRecordPositionStatement.get('sources')
+    insertRecordStatement.run('sources', source.id, serialize(source), position)
+  },
+  updateSource: (source) => updateRecord('sources', source.id, source),
+  deleteSource: (sourceId) => deleteRecord('sources', sourceId),
   getValidationStates: () => getValidationStates(),
+  updateValidationState,
+  deleteValidationState: (sourceName) => deleteRecord('validation_states', sourceName),
   getReviewIssues: () => listRecords('review_issues'),
   getDecisionRecords: () => listRecords('decision_records'),
   getOutputItems: () => listRecords('output_items'),

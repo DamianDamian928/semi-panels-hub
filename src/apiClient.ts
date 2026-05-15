@@ -7,11 +7,23 @@ import type {
   OutputItem,
   PersistenceState,
   ReviewIssue,
+  SourceCreateInput,
   SourceDefinition,
+  SourceFileMetadata,
   ValidationState,
 } from './types'
 
 const apiBaseUrl = 'http://127.0.0.1:8788'
+
+export class ApiRequestError extends Error {
+  status?: number
+
+  constructor(message: string, status?: number) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+  }
+}
 
 export type ReviewIssueSummary = {
   open: number
@@ -143,7 +155,7 @@ const fetchJson = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${apiBaseUrl}${path}`)
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`)
+    throw new ApiRequestError(`API request failed: ${response.status}`, response.status)
   }
 
   return (await response.json()) as T
@@ -159,7 +171,19 @@ const postJson = async <T>(path: string, body: unknown): Promise<T> => {
   })
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`)
+    throw new ApiRequestError(`API request failed: ${response.status}`, response.status)
+  }
+
+  return (await response.json()) as T
+}
+
+const deleteJson = async <T>(path: string): Promise<T> => {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    throw new ApiRequestError(`API request failed: ${response.status}`, response.status)
   }
 
   return (await response.json()) as T
@@ -168,6 +192,20 @@ const postJson = async <T>(path: string, body: unknown): Promise<T> => {
 export const fetchBootstrapData = () => fetchJson<BootstrapResponse>('/api/bootstrap')
 
 export const fetchTechnicalStatus = () => fetchJson<TechnicalStatus>('/api/technical-status')
+
+export const apiCreateSource = (source: SourceCreateInput) =>
+  postJson<BootstrapResponse>('/api/sources', source)
+
+export const apiDeleteSource = (sourceId: string) =>
+  deleteJson<BootstrapResponse>(`/api/sources/${encodeURIComponent(sourceId)}`)
+
+export const apiRegisterSourceLocalFile = (sourceId: string, file: SourceFileMetadata) =>
+  postJson<BootstrapResponse>(`/api/sources/${encodeURIComponent(sourceId)}/local-file`, { file })
+
+export const apiCheckSourcesAccess = () => postJson<BootstrapResponse>('/api/sources/check', {})
+
+export const apiCheckSourceAccess = (sourceId: string) =>
+  postJson<BootstrapResponse>(`/api/sources/${encodeURIComponent(sourceId)}/check`, {})
 
 export const apiMarkIssueForDecision = (issueId: string) =>
   postJson<WorkflowPayload>('/api/workflow/mark-issue-for-decision', { issueId })

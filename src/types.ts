@@ -3,6 +3,7 @@ export type MainStage = 'BOM' | 'Documentation' | 'Costing'
 export type BomStage = 'MATVAR' | 'L1' | 'L2' | 'L3'
 export type ProcessStep = 'Main' | 'Sources' | 'Connections' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings-sources' | 'review-editor'
+export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
 export type SidebarIconName =
   | 'main'
@@ -44,16 +45,50 @@ export type StepPurposeContent = {
 export type SourceDefinition = {
   id: string
   name: string
-  type: 'File' | 'Folder' | 'SQL' | 'SharePoint' | 'Manual export'
+  type: SourceType
   location: string
   scope: string
   status: 'Ready' | 'Needs location' | 'Needs check' | 'Error'
-  usedFor: Array<'BOM' | 'Documentation' | 'Costing'>
+  usedFor: SourceUsage[]
   expectedFormat: string
   lastChecked: string
   owner: string
   description: string
   accessMode: 'Read-only'
+  sourceFile?: SourceFileMetadata
+  accessCheck?: SourceAccessCheck
+}
+
+export type SourceType = 'File' | 'Folder' | 'SQL' | 'SharePoint' | 'Manual export'
+export type SourceUsage = 'BOM' | 'Documentation' | 'Costing'
+
+export type SourceCreateInput = {
+  name: string
+  type: SourceType
+  usedFor: SourceUsage[]
+  expectedFormat: string
+  owner: string
+  description: string
+}
+
+export type SourceFileMetadata = {
+  name: string
+  path: string
+  directory: string
+  extension: string
+  sizeBytes: number
+  modifiedAt: string
+  registeredAt?: string
+}
+
+export type SourceAccessCheck = {
+  checkedAt: string
+  status: SourceDefinition['status']
+  message: string
+  exists: boolean
+  readable: boolean
+  sizeBytes?: number
+  modifiedAt?: string
 }
 
 export type ConnectionTreeSection = {
