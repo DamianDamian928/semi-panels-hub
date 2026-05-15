@@ -3,6 +3,7 @@ import { access, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readExcelPreview } from './excelPreview.mjs'
 import { workflowActions } from './workflowActions.mjs'
 import { workflowRepository } from './workflowRepository.mjs'
 
@@ -58,6 +59,7 @@ const isLocalFilePayload = (file) =>
 
 const sourceTypes = new Set(['File', 'Folder', 'SQL', 'SharePoint', 'Manual export'])
 const sourceUsages = new Set(['BOM', 'Documentation', 'Costing'])
+const connectionTargetIds = new Set(['dashboard', 'bom-matvar', 'bom-l1', 'bom-l2', 'bom-l3', 'documentation', 'costing'])
 
 const isSourceCreatePayload = (value) =>
   value &&
@@ -69,6 +71,30 @@ const isSourceCreatePayload = (value) =>
   typeof value.expectedFormat === 'string' &&
   typeof value.owner === 'string' &&
   typeof value.description === 'string'
+
+const isSourceConnectionsPayload = (value) =>
+  value &&
+  typeof value === 'object' &&
+  value.connectionsByTarget &&
+  typeof value.connectionsByTarget === 'object' &&
+  [...connectionTargetIds].every((targetId) => {
+    const sourceIds = value.connectionsByTarget[targetId]
+    return Array.isArray(sourceIds) && sourceIds.every((sourceId) => typeof sourceId === 'string')
+  })
+
+const isSourceMappingsPayload = (value) =>
+  value &&
+  typeof value === 'object' &&
+  value.mappingConfigs &&
+  typeof value.mappingConfigs === 'object' &&
+  Object.values(value.mappingConfigs).every((mapping) =>
+    mapping &&
+    typeof mapping === 'object' &&
+    typeof mapping.id === 'string' &&
+    connectionTargetIds.has(mapping.targetId) &&
+    typeof mapping.sourceId === 'string' &&
+    Array.isArray(mapping.columnMappings),
+  )
 
 const defaultLocationByType = {
   File: 'Waiting for local file',
@@ -89,6 +115,8 @@ const defaultExpectedFormatByType = {
 const checkedAtLabel = (checkedAt) => checkedAt
 
 const getSourcePath = (source) => source.sourceFile?.path
+
+const previewableFileExtensions = new Set(['xlsx', 'xlsm'])
 
 const checkSourceAccess = async (source) => {
   const checkedAt = new Date().toISOString()
@@ -269,6 +297,46 @@ export const createRequestHandler = ({ host, port }) => async (request, response
     return
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/source-connections') {
+    let body
+
+    try {
+      body = await readJsonBody(request)
+    } catch {
+      sendJson(response, 400, { error: 'Invalid JSON body' })
+      return
+    }
+
+    if (!isSourceConnectionsPayload(body)) {
+      sendJson(response, 400, { error: 'Invalid source connections payload' })
+      return
+    }
+
+    workflowRepository.saveSourceConnections(body.connectionsByTarget)
+    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/source-mappings') {
+    let body
+
+    try {
+      body = await readJsonBody(request)
+    } catch {
+      sendJson(response, 400, { error: 'Invalid JSON body' })
+      return
+    }
+
+    if (!isSourceMappingsPayload(body)) {
+      sendJson(response, 400, { error: 'Invalid source mappings payload' })
+      return
+    }
+
+    workflowRepository.saveSourceMappings(body.mappingConfigs)
+    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    return
+  }
+
   if (request.method === 'POST' && url.pathname.startsWith('/api/sources/') && url.pathname.endsWith('/check')) {
     const sourceId = decodeURIComponent(url.pathname.split('/')[3] ?? '')
     const source = workflowRepository.getSource(sourceId)
@@ -280,6 +348,50 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     await checkAndSaveSource(source)
     sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/api/sources/') && url.pathname.endsWith('/preview')) {
+    const sourceId = decodeURIComponent(url.pathname.split('/')[3] ?? '')
+    const source = workflowRepository.getSource(sourceId)
+
+    if (!source) {
+      sendJson(response, 404, { error: 'Source not found' })
+      return
+    }
+
+    const sourcePath = getSourcePath(source)
+    const extension = source.sourceFile?.extension?.toLowerCase()
+
+    if (!sourcePath || !extension) {
+      sendJson(response, 400, { error: 'This source does not have a local file registered.' })
+      return
+    }
+
+    if (!previewableFileExtensions.has(extension)) {
+      sendJson(response, 400, { error: 'Preview is currently available for .xlsx and .xlsm files.' })
+      return
+    }
+
+    try {
+      const preview = await readExcelPreview(sourcePath, {
+        sheetName: url.searchParams.get('sheet') ?? undefined,
+        rowLimit: url.searchParams.get('rowLimit') ?? undefined,
+      })
+      sendJson(response, 200, preview)
+    } catch (error) {
+      sendJson(response, 500, {
+        error: error instanceof Error
+          ? error.message
+          : 'Source preview could not be read.',
+      })
+    }
+
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/storage-status') {
+    sendJson(response, 200, workflowRepository.getStorageStatus(url.searchParams.get('step') ?? 'Main'))
     return
   }
 

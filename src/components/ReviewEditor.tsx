@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { parseDelimitedReviewSnapshot } from '../adapters/readOnlyReviewAdapter'
 import type { ReviewIssueAdapterResult } from '../adapters/readOnlyReviewAdapter'
@@ -8,6 +8,7 @@ import type {
   AuditEvent,
   ApiConnectionState,
   BomStage,
+  ConnectionTargetId,
   DashboardRow,
   DecisionFilter,
   DecisionRecord,
@@ -22,28 +23,31 @@ import type {
   ReviewIssue,
   ReviewIssueFilter,
   SourceCreateInput,
+  SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
+  SourceMappingConfig,
   StepPurposeContent,
   ValidationState,
 } from '../types'
 import { ApiStatusBanner } from './ApiStatusBanner'
+import { StorageStatusPanel } from './StorageStatusPanel'
 import {
   connectionsCustomStyles,
   bomStages,
   BrandGlyph,
-  connectionTree,
   localFileHelperEndpoint,
   mainStages,
   sidebarSteps,
   SidebarGlyph,
-  sourceCardTemplates,
   statusClassName,
   validationStateClassName,
 } from './sharedReviewUi'
-import type { EditableConnectionCard, LocalFileSelection } from './sharedReviewUi'
+import type { LocalFileSelection } from './sharedReviewUi'
+import { useStorageStatus } from '../hooks/useStorageStatus'
 import { ConnectionsStep } from './steps/ConnectionsStep'
 import { DecisionsStep } from './steps/DecisionsStep'
+import { createDefaultMappingConfig, createMappingId, MappingStep } from './steps/MappingStep'
 import { OutputStep } from './steps/OutputStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { SourcesStep } from './steps/SourcesStep'
@@ -54,10 +58,90 @@ const activeStepByStatus: Record<DashboardRow['status'], ProcessStep> = {
   Completed: 'Output',
 }
 
+const connectionTargetByMainStage: Record<MainStage, ConnectionTargetId> = {
+  BOM: 'bom-matvar',
+  Documentation: 'documentation',
+  Costing: 'costing',
+}
+
+const connectionTargetByBomStage: Record<BomStage, ConnectionTargetId> = {
+  MATVAR: 'bom-matvar',
+  L1: 'bom-l1',
+  L2: 'bom-l2',
+  L3: 'bom-l3',
+}
+
+const legacyConnectionsStorageKey = 'semi-panels-hub.connections.v1'
+const connectionTargetIds: ConnectionTargetId[] = [
+  'dashboard',
+  'bom-matvar',
+  'bom-l1',
+  'bom-l2',
+  'bom-l3',
+  'documentation',
+  'costing',
+]
+
+const normalizeConnectionsByTarget = (value: unknown): SourceConnectionsByTarget | null => {
+  if (!value || typeof value !== 'object') return null
+
+  return Object.fromEntries(
+    connectionTargetIds.map((targetId) => {
+      const sourceIds = (value as Partial<Record<ConnectionTargetId, unknown>>)[targetId]
+      return [
+        targetId,
+        Array.isArray(sourceIds)
+          ? sourceIds.filter((sourceId): sourceId is string => typeof sourceId === 'string')
+          : [],
+      ]
+    }),
+  ) as SourceConnectionsByTarget
+}
+
+const readLegacyConnectionsByTarget = () => {
+  try {
+    const storedValue = window.localStorage.getItem(legacyConnectionsStorageKey)
+    return storedValue ? normalizeConnectionsByTarget(JSON.parse(storedValue)) : null
+  } catch {
+    return null
+  }
+}
+
+const findSourceId = (sources: SourceDefinition[], ...nameParts: string[]) => {
+  const normalizedNameParts = nameParts.map((namePart) => namePart.toLowerCase())
+  return sources.find((source) => {
+    const sourceName = source.name.toLowerCase()
+    return normalizedNameParts.some((namePart) => sourceName.includes(namePart))
+  })?.id
+}
+
+const createInitialConnectionsByTarget = (sources: SourceDefinition[]): Record<ConnectionTargetId, string[]> => {
+  const fishbowl = findSourceId(sources, 'fishbowl')
+  const massProduction = findSourceId(sources, 'mass production')
+  const partsBom = findSourceId(sources, 'parts&bom', 'parts')
+  const matvar = findSourceId(sources, 'matvar')
+  const plm = findSourceId(sources, 'plm')
+  const boxDocs = findSourceId(sources, 'box documentation')
+  const sharepointDocs = findSourceId(sources, 'sharepoint documentation')
+
+  const compact = (sourceIds: Array<string | undefined>) => sourceIds.filter(Boolean) as string[]
+
+  return {
+    dashboard: compact([massProduction, partsBom]),
+    'bom-matvar': compact([matvar, partsBom]),
+    'bom-l1': compact([fishbowl, partsBom, plm]),
+    'bom-l2': compact([fishbowl, partsBom]),
+    'bom-l3': compact([plm]),
+    documentation: compact([boxDocs, sharepointDocs]),
+    costing: compact([massProduction]),
+  }
+}
+
 const nextStepByProcess: Record<ProcessStep, { title: string; description: string }> = {
   Main: { title: 'Sources', description: 'Review the registered sources before connecting them to stages.' },
   Sources: { title: 'Connections', description: 'Assign read-only sources to the review stages.' },
-  Connections: { title: 'Validation', description: 'Check source readiness before normalization.' },
+  Connections: { title: 'Mapping', description: 'Configure how each connected source should be read.' },
+  Mapping: { title: 'Validation', description: 'Check source readiness before normalization.' },
   Validation: { title: 'Normalization', description: 'Prepare a shared review model from connected inputs.' },
   Normalization: { title: 'Comparison', description: 'Compare normalized data and detect review issues.' },
   Comparison: { title: 'Review', description: 'Triage differences and mark items that need decisions.' },
@@ -115,6 +199,16 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
     yourRole: 'Choose which inputs belong to each stage.',
     example: 'Parts&BOM and Fishbowl can be assigned to BOM stages.',
     output: 'Stages know which sources they should use.',
+  },
+  Mapping: {
+    eyebrow: 'Mapping',
+    title: 'Source field mapping',
+    summary: 'This screen defines how each connected source should be read before validation.',
+    goal: 'Map source structure without cluttering the visual connection map.',
+    function: 'Stores role, sheet/table and key column settings per source connection.',
+    yourRole: 'Confirm the minimum mapping required for validation.',
+    example: 'BOM L1 -> Parts&BOM can use Part Number as the key column.',
+    output: 'Connected sources have readable mapping rules.',
   },
   Validation: {
     eyebrow: 'Validation',
@@ -208,11 +302,15 @@ type ReviewEditorProps = {
   localAuditEvents: AuditEvent[]
   apiConnectionState: ApiConnectionState
   apiConnectionError: string | null
+  sourceConnectionsByTarget: SourceConnectionsByTarget | null
+  sourceMappingConfigs: Record<string, SourceMappingConfig>
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
   deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
   checkSourceAccess: (sourceId: string) => Promise<void>
+  saveSourceConnections: (connectionsByTarget: SourceConnectionsByTarget) => Promise<void>
+  saveSourceMappings: (mappingConfigs: Record<string, SourceMappingConfig>) => Promise<void>
   markIssueForDecision: (issue: ReviewIssue) => Promise<void>
   saveDecisionStatus: (decision: DecisionRecord, status: DecisionStatus) => Promise<void>
   savePreparedOutput: (outputItem: OutputRow) => Promise<void>
@@ -239,11 +337,15 @@ export function ReviewEditor({
   localAuditEvents,
   apiConnectionState,
   apiConnectionError,
+  sourceConnectionsByTarget,
+  sourceMappingConfigs,
   createSource,
   deleteSource,
   registerSourceLocalFile,
   checkSourcesAccess,
   checkSourceAccess,
+  saveSourceConnections,
+  saveSourceMappings,
   markIssueForDecision,
   saveDecisionStatus,
   savePreparedOutput,
@@ -253,7 +355,7 @@ export function ReviewEditor({
   const [activeBomStage, setActiveBomStage] = useState<BomStage>('MATVAR')
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStep>(activeStepByStatus[selectedReview.status])
   const [activeSourceId, setActiveSourceId] = useState<string>(sourceDefinitions[0]?.id ?? '')
-  const [activeConnectionNodeId, setActiveConnectionNodeId] = useState<string>('matvar')
+  const [activeConnectionTargetId, setActiveConnectionTargetId] = useState<ConnectionTargetId>('dashboard')
   const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0]?.id ?? '')
   const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
   const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0]?.issueId ?? '')
@@ -267,34 +369,24 @@ export function ReviewEditor({
   const [sourceMutationPending, setSourceMutationPending] = useState(false)
   const [sourcesAutoChecking, setSourcesAutoChecking] = useState(false)
   const [sourceSelectionError, setSourceSelectionError] = useState<string | null>(null)
-  const [connectionCardsByStage, setConnectionCardsByStage] = useState<Record<string, EditableConnectionCard[]>>(() =>
-    Object.fromEntries(
-      Object.entries(sourceCardTemplates).map(([stageId, cards]) => [
-        stageId,
-        cards.map((card) => ({ ...card })),
-      ]),
-    ) as Record<string, EditableConnectionCard[]>,
+  const [connectionsByTarget, setConnectionsByTarget] = useState<Record<ConnectionTargetId, string[]>>(() =>
+    sourceConnectionsByTarget ?? readLegacyConnectionsByTarget() ?? createInitialConnectionsByTarget(sourceDefinitions),
   )
+  const [activeMappingId, setActiveMappingId] = useState<string>(() => createMappingId('dashboard', '1'))
+  const [mappingConfigs, setMappingConfigs] = useState<Record<string, SourceMappingConfig>>(() => sourceMappingConfigs)
+  const initialConnectionsSavedRef = useRef(false)
 
   const currentProcessStep = activeProcessStep
+  const {
+    storageStatus,
+    storageStatusLoading,
+    storageStatusError,
+  } = useStorageStatus(currentProcessStep)
   const nextStep = nextStepByProcess[currentProcessStep]
   const purposeContent = stepPurposeContent[currentProcessStep]
   const activeStageInfo = stageDescriptions[activeMainStage]
   const currentScope = activeMainStage === 'BOM' ? `BOM / ${activeBomStage}` : activeMainStage
   const isMainStep = currentProcessStep === 'Main'
-
-  const allConnectionSections = [
-    ...connectionTree.BOM,
-    ...connectionTree.Documentation,
-    ...connectionTree.Costing,
-  ]
-  const activeConnectionSections = allConnectionSections
-  const activeConnectionCards = connectionCardsByStage[activeConnectionNodeId] ?? []
-  const activeConnectionSection = allConnectionSections.find(
-    (section) => section.items?.some((item) => item.id === activeConnectionNodeId) || section.id === activeConnectionNodeId,
-  )
-  const activeConnectionLabel = activeConnectionSection?.items?.find((item) => item.id === activeConnectionNodeId)?.label ?? activeConnectionSection?.label ?? 'Stage'
-  const activeConnectionMainLabel = activeConnectionSection?.label ?? 'BOM'
 
   useEffect(() => {
     if (currentProcessStep !== 'Sources') return
@@ -321,104 +413,121 @@ export function ReviewEditor({
     }
   }, [currentProcessStep])
 
-  const addConnectionCard = (stageId: string) => {
-    setConnectionCardsByStage((current) => {
-      const existingCards = current[stageId] ?? []
+  useEffect(() => {
+    const sourceIds = new Set(sourceDefinitions.map((source) => source.id))
+    setConnectionsByTarget((current) => {
+      let changed = false
+      const next = Object.fromEntries(
+        Object.entries(current).map(([targetId, connectedSourceIds]) => {
+          const filteredSourceIds = connectedSourceIds.filter((sourceId) => sourceIds.has(sourceId))
+          if (filteredSourceIds.length !== connectedSourceIds.length) changed = true
+          return [targetId, filteredSourceIds]
+        }),
+      ) as Record<ConnectionTargetId, string[]>
 
-      return {
+      if (changed) void saveSourceConnections(next).catch(() => undefined)
+      return changed ? next : current
+    })
+  }, [sourceDefinitions])
+
+  useEffect(() => {
+    if (sourceConnectionsByTarget) setConnectionsByTarget(sourceConnectionsByTarget)
+  }, [sourceConnectionsByTarget])
+
+  useEffect(() => {
+    if (sourceConnectionsByTarget !== null || initialConnectionsSavedRef.current) return
+
+    initialConnectionsSavedRef.current = true
+    void saveSourceConnections(connectionsByTarget)
+      .then(() => {
+        window.localStorage.removeItem(legacyConnectionsStorageKey)
+      })
+      .catch(() => undefined)
+  }, [connectionsByTarget, sourceConnectionsByTarget])
+
+  useEffect(() => {
+    setMappingConfigs(sourceMappingConfigs)
+  }, [sourceMappingConfigs])
+
+  const connectSourceToTarget = (targetId: ConnectionTargetId, sourceId: string) => {
+    setConnectionsByTarget((current) => {
+      const currentSourceIds = current[targetId] ?? []
+      if (currentSourceIds.includes(sourceId)) return current
+
+      const next = {
         ...current,
-        [stageId]: [
-          ...existingCards,
-          {
-            id: `empty-${stageId}-${Date.now()}`,
-            title: 'Choose source',
-            subtitle: `Empty slot ${existingCards.length + 1}`,
-            line1Label: 'Source',
-            line1Value: 'Not selected',
-            line2Label: 'Mode',
-            line2Value: 'Waiting',
-            status: 'Not connected',
-          },
-        ],
+        [targetId]: [...currentSourceIds, sourceId],
       }
+      void saveSourceConnections(next).catch(() => undefined)
+      return next
+    })
+    setActiveConnectionTargetId(targetId)
+  }
+
+  const disconnectSourceFromTarget = (targetId: ConnectionTargetId, sourceId: string) => {
+    setConnectionsByTarget((current) => {
+      const next = {
+        ...current,
+        [targetId]: (current[targetId] ?? []).filter((connectedSourceId) => connectedSourceId !== sourceId),
+      }
+      void saveSourceConnections(next).catch(() => undefined)
+      return next
     })
   }
 
-  const removeConnectionCard = (stageId: string, cardId: string) => {
-    setConnectionCardsByStage((current) => ({
-      ...current,
-      [stageId]: (current[stageId] ?? []).filter((card) => card.id !== cardId),
-    }))
-  }
+  const updateMappingConfig = (mappingId: string, update: Partial<SourceMappingConfig>) => {
+    const [targetId, sourceId] = mappingId.split(':') as [ConnectionTargetId, string]
 
-  const handleConnectionFileSelection = async (stageId: string, cardId: string) => {
-    setConnectionCardsByStage((current) => ({
-      ...current,
-      [stageId]: (current[stageId] ?? []).map((card) =>
-        card.id === cardId
-          ? { ...card, fileSelectionPending: true, fileSelectionError: undefined }
-          : card,
-      ),
-    }))
-
-    try {
-      const response = await fetch(localFileHelperEndpoint)
-      if (!response.ok) throw new Error('Local file helper did not respond correctly.')
-
-      const result = (await response.json()) as {
-        cancelled?: boolean
-        file?: LocalFileSelection
-        error?: string
+    setMappingConfigs((current) => {
+      const next = {
+        ...current,
+        [mappingId]: {
+          ...(current[mappingId] ?? createDefaultMappingConfig(targetId, sourceId)),
+          ...update,
+          id: mappingId,
+          targetId,
+          sourceId,
+        },
       }
-
-      if (result.cancelled) return
-      if (!result.file) throw new Error(result.error ?? 'No file was returned by the local helper.')
-
-      const file = result.file
-
-      setConnectionCardsByStage((current) => ({
-        ...current,
-        [stageId]: (current[stageId] ?? []).map((card) =>
-          card.id === cardId
-            ? {
-                ...card,
-                title: file.name,
-                subtitle: 'Local file selected',
-                selectedFileName: file.name,
-                selectedFilePath: file.path,
-                selectedFileDirectory: file.directory,
-                selectedFileExtension: file.extension,
-                selectedFileSizeBytes: file.sizeBytes,
-                selectedFileModifiedAt: file.modifiedAt,
-                fileSelectionError: undefined,
-                fileSelectionPending: false,
-                line1Label: 'Source',
-                line1Value: 'Local file',
-                line2Label: 'File',
-                line2Value: file.name,
-                status: 'Selected',
-              }
-            : card,
-        ),
-      }))
-    } catch (error) {
-      setConnectionCardsByStage((current) => ({
-        ...current,
-        [stageId]: (current[stageId] ?? []).map((card) =>
-          card.id === cardId
-            ? {
-                ...card,
-                fileSelectionError:
-                  error instanceof Error
-                    ? error.message
-                    : 'Could not open the local file dialog.',
-                fileSelectionPending: false,
-              }
-            : card,
-        ),
-      }))
-    }
+      void saveSourceMappings(next).catch(() => undefined)
+      return next
+    })
   }
+
+  useEffect(() => {
+    if (currentProcessStep !== 'Mapping') return
+
+    const sourceIds = new Set(sourceDefinitions.map((source) => source.id))
+    const activeAvailableMappingIds = (connectionsByTarget[activeConnectionTargetId] ?? [])
+        .filter((sourceId) => sourceIds.has(sourceId))
+        .map((sourceId) => createMappingId(activeConnectionTargetId, sourceId))
+    const activeAvailableMappingIdSet = new Set(activeAvailableMappingIds)
+    const allAvailableMappingIdSet = new Set(
+      Object.entries(connectionsByTarget).flatMap(([targetId, connectedSourceIds]) =>
+        connectedSourceIds
+          .filter((sourceId) => sourceIds.has(sourceId))
+          .map((sourceId) => createMappingId(targetId as ConnectionTargetId, sourceId)),
+      ),
+    )
+
+    if (!activeAvailableMappingIdSet.has(activeMappingId)) {
+      setActiveMappingId(activeAvailableMappingIds[0] ?? '')
+    }
+
+    setMappingConfigs((current) => {
+      let changed = false
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([mappingId]) => {
+          const keep = allAvailableMappingIdSet.has(mappingId)
+          if (!keep) changed = true
+          return keep
+        }),
+      ) as Record<string, SourceMappingConfig>
+
+      if (changed) void saveSourceMappings(next).catch(() => undefined)
+      return changed ? next : current
+    })
+  }, [activeConnectionTargetId, activeMappingId, connectionsByTarget, currentProcessStep, sourceDefinitions])
 
   const handleSourceFileSelection = async (sourceId: string) => {
     setSourceSelectionPendingId(sourceId)
@@ -533,11 +642,6 @@ export function ReviewEditor({
     } finally {
       event.target.value = ''
     }
-  }
-
-  const selectConnectionNode = (nodeId: string, bomStage?: BomStage) => {
-    setActiveConnectionNodeId(nodeId)
-    if (bomStage) setActiveBomStage(bomStage)
   }
 
   const renderSourceNamesStep = (
@@ -765,9 +869,7 @@ export function ReviewEditor({
                 className={`stage-tab ${isActive ? 'stage-tab-active' : ''}`}
                 onClick={() => {
                   setActiveMainStage(stage)
-                  const nextSection = connectionTree[stage][0]
-                  const nextItemId = nextSection.items?.[0]?.id ?? nextSection.id
-                  setActiveConnectionNodeId(nextItemId)
+                  setActiveConnectionTargetId(connectionTargetByMainStage[stage])
                 }}
                 aria-pressed={isActive}
               >
@@ -789,7 +891,7 @@ export function ReviewEditor({
                   className={`substage-tab ${isActive ? 'substage-tab-active' : ''}`}
                   onClick={() => {
                     setActiveBomStage(stage)
-                    setActiveConnectionNodeId(stage.toLowerCase() === 'matvar' ? 'matvar' : stage.toLowerCase())
+                    setActiveConnectionTargetId(connectionTargetByBomStage[stage])
                   }}
                   aria-pressed={isActive}
                 >
@@ -875,19 +977,25 @@ export function ReviewEditor({
     if (currentProcessStep === 'Connections') {
       return (
         <ConnectionsStep
-          activeMainStage={activeMainStage}
-          activeConnectionNodeId={activeConnectionNodeId}
-          activeConnectionSections={activeConnectionSections}
-          activeConnectionCards={activeConnectionCards}
-          activeConnectionLabel={activeConnectionLabel}
-          activeConnectionMainLabel={activeConnectionMainLabel}
+          activeConnectionTargetId={activeConnectionTargetId}
+          connectionsByTarget={connectionsByTarget}
           sourceDefinitions={sourceDefinitions}
-          onSelectConnectionNode={selectConnectionNode}
-          onAddConnectionCard={addConnectionCard}
-          onRemoveConnectionCard={removeConnectionCard}
-          onChooseConnectionFile={(stageId, cardId) => {
-            void handleConnectionFileSelection(stageId, cardId)
-          }}
+          onSelectConnectionTarget={setActiveConnectionTargetId}
+          onConnectSourceToTarget={connectSourceToTarget}
+          onDisconnectSourceFromTarget={disconnectSourceFromTarget}
+        />
+      )
+    }
+    if (currentProcessStep === 'Mapping') {
+      return (
+        <MappingStep
+          activeMappingId={activeMappingId}
+          activeConnectionTargetId={activeConnectionTargetId}
+          connectionsByTarget={connectionsByTarget}
+          mappingConfigs={mappingConfigs}
+          sourceDefinitions={sourceDefinitions}
+          onSelectMapping={setActiveMappingId}
+          onUpdateMapping={updateMappingConfig}
         />
       )
     }
@@ -1025,9 +1133,12 @@ export function ReviewEditor({
           </div>
           <div className="header-meta">
             <span className={statusClassName[selectedReview.status]}>{selectedReview.status}</span>
-            <span className="meta-chip">Owner: {selectedReview.owner}</span>
-            <span className="meta-chip">Updated: {selectedReview.lastUpdated}</span>
             <ApiStatusBanner state={apiConnectionState} error={apiConnectionError} />
+            <StorageStatusPanel
+              status={storageStatus}
+              loading={storageStatusLoading}
+              error={storageStatusError}
+            />
           </div>
         </header>
 

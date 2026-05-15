@@ -14,7 +14,7 @@
   --muted-strong: #b7c7db;
   --accent: #84c8ff;
   --accent-strong: #b8dcff;
-  --accent-glow: rgba(100, 176, 255, 0.2);
+  --accent-glow: rgba(100, 176, 255, 0.08);
   --radius-panel: 16px;
   --radius-control: 13px;
   --shadow-panel: 0 22px 60px rgba(0, 0, 0, 0.32);
@@ -154,10 +154,11 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  min-height: 34px;
   margin: 0;
   padding: 7px 10px;
   border: 1px solid rgba(126, 172, 220, 0.14);
-  border-radius: 999px;
+  border-radius: 10px;
   background: rgba(10, 19, 31, 0.46);
   box-shadow: none;
 }
@@ -172,7 +173,7 @@ h3 {
 .api-status-banner-main div {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .api-status-banner-main span {
@@ -242,6 +243,42 @@ h3 {
 .api-status-banner-error .api-status-dot {
   color: #ffb15c;
   background: #ffb15c;
+}
+
+.storage-status-panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid rgba(126, 172, 220, 0.14);
+  border-radius: 10px;
+  background: rgba(10, 19, 31, 0.46);
+  color: var(--muted);
+}
+
+.storage-status-panel span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.storage-status-panel strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.storage-status-panel small {
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.storage-status-panel-error {
+  border-color: rgba(255, 177, 92, 0.2);
+  background: rgba(38, 29, 19, 0.38);
 }
 
 .eyebrow {
@@ -338,7 +375,7 @@ tbody tr:last-child td {
 .substage-tab:hover {
   border-color: var(--border-strong);
   background: var(--surface-hover);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2), 0 0 20px var(--accent-glow);
+  box-shadow: none;
 }
 
 .secondary-button {
@@ -447,7 +484,7 @@ tbody tr:last-child td {
   height: 8px;
   border-radius: 999px;
   background: currentColor;
-  box-shadow: 0 0 10px currentColor;
+  box-shadow: none;
 }
 
 .technical-status-pill-online {
@@ -628,12 +665,12 @@ tbody tr:last-child td {
   height: 10px;
   border-radius: 999px;
   background: #ffd36e;
-  box-shadow: 0 0 12px rgba(255, 211, 110, 0.6);
+  box-shadow: none;
 }
 
 .diagnostic-led-ok {
   background: #77d59f;
-  box-shadow: 0 0 12px rgba(119, 213, 159, 0.65);
+  box-shadow: none;
 }
 
 .diagnostic-led-warn {
@@ -951,7 +988,7 @@ tbody tr:last-child td {
 .sidebar-dashboard-link:hover {
   border-color: var(--border-strong);
   background: var(--surface-hover);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 22px var(--accent-glow);
+  box-shadow: none;
 }
 
 .review-nav {
@@ -986,10 +1023,7 @@ tbody tr:last-child td {
 .review-nav-item-active {
   border-color: var(--border-strong);
   background: var(--surface-active);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.045),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.012),
-    0 12px 34px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   color: var(--text);
 }
 
@@ -1080,12 +1114,12 @@ tbody tr:last-child td {
 .stage-tab-active,
 .substage-tab-active {
   color: #eff7ff;
-  border-color: rgba(71, 184, 255, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(71, 184, 255, 0.35), 0 0 24px rgba(21, 147, 231, 0.18);
+  border-color: var(--border-strong);
+  box-shadow: none;
 }
 
 .stage-tab-active {
-  background: linear-gradient(90deg, rgba(10, 50, 90, 0.98), rgba(13, 73, 130, 0.94));
+  background: var(--surface-active);
 }
 
 .stage-tab-index {
@@ -1094,15 +1128,7 @@ tbody tr:last-child td {
 
 .stage-tab-badge,
 .substage-tab-badge {
-  display: inline-flex;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0;
-  text-transform: uppercase;
-  color: #9be2ff;
-  background: rgba(87, 178, 255, 0.14);
+  display: none;
 }
 
 .substage-tab {
@@ -1891,7 +1917,7 @@ tbody tr:last-child td {
 
 .output-filter-button-active::after {
   background: #36bdf8;
-  box-shadow: 0 0 14px rgba(54, 189, 248, 0.6);
+  box-shadow: none;
 }
 
 .output-list {
@@ -2772,7 +2798,7 @@ tbody tr:last-child td {
   border-color: var(--border-strong);
   background: var(--surface-active);
   color: var(--text);
-  box-shadow: 0 0 20px var(--accent-glow);
+  box-shadow: none;
 }
 
 .review-issue-row,
@@ -2798,7 +2824,7 @@ tbody tr:last-child td {
 .decision-row-active {
   border-color: var(--border-strong);
   background: var(--surface-active);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18), 0 0 20px var(--accent-glow);
+  box-shadow: none;
   transform: translateY(-1px);
 }
 

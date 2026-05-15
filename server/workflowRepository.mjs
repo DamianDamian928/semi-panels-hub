@@ -194,6 +194,26 @@ const addAuditEvent = (event) => {
   insertRecordStatement.run('audit_events', event.id, serialize(event), position)
 }
 
+const getSourceConnections = () =>
+  getRecord('source_connections', 'default')?.connectionsByTarget ?? null
+
+const saveSourceConnections = (connectionsByTarget) => {
+  upsertRecord('source_connections', 'default', {
+    connectionsByTarget,
+    updatedAt: new Date().toISOString(),
+  }, 0)
+}
+
+const getSourceMappings = () =>
+  getRecord('source_mappings', 'default')?.mappingConfigs ?? {}
+
+const saveSourceMappings = (mappingConfigs) => {
+  upsertRecord('source_mappings', 'default', {
+    mappingConfigs,
+    updatedAt: new Date().toISOString(),
+  }, 0)
+}
+
 const getWorkflowPayload = () => {
   const payload = {
     reviewIssues: listRecords('review_issues'),
@@ -251,6 +271,8 @@ const getTechnicalStatus = ({ host, port, packageInfo }) => {
       decisions: workflowPayload.decisionRecords.length,
       outputItems: workflowPayload.outputItems.length,
       auditEvents: workflowPayload.auditEvents.length,
+      sourceConnections: Object.values(getSourceConnections() ?? {}).reduce((count, sourceIds) => count + sourceIds.length, 0),
+      sourceMappings: Object.keys(getSourceMappings()).length,
     },
     workflow: {
       openIssues: workflowView.review.summary.open,
@@ -275,6 +297,115 @@ const getTechnicalStatus = ({ host, port, packageInfo }) => {
       outputAsArtifact: true,
       auditRequired: true,
     },
+  }
+}
+
+const getCollectionCount = (collection) => countRecordsStatement.get(collection).count
+
+const getStorageRecordUpdatedAt = (collection, recordId) => {
+  const record = getRecord(collection, recordId)
+  return record?.updatedAt ?? null
+}
+
+const getStorageStatus = (step) => {
+  const sourcesCount = getCollectionCount('sources')
+  const sourceConnections = getSourceConnections() ?? {}
+  const sourceMappings = getSourceMappings()
+  const sourceConnectionsCount = Object.values(sourceConnections).reduce((count, sourceIds) => count + sourceIds.length, 0)
+  const sourceMappingsCount = Object.keys(sourceMappings).length
+  const sourceMappingColumnsCount = Object.values(sourceMappings).reduce(
+    (count, mapping) => count + (Array.isArray(mapping.columnMappings) ? mapping.columnMappings.length : 0),
+    0,
+  )
+
+  const common = {
+    step,
+    database: {
+      engine: 'sqlite',
+      status: 'ready',
+    },
+    refreshedAt: new Date().toISOString(),
+    readOnlyInputs: true,
+  }
+
+  const statusByStep = {
+    Sources: {
+      storage: 'SQLite',
+      subject: 'Sources',
+      persistence: 'Saved after source changes',
+      records: sourcesCount,
+      lastUpdated: null,
+      detail: 'Local files are stored as read-only path references.',
+    },
+    Connections: {
+      storage: 'SQLite',
+      subject: 'Connections',
+      persistence: 'Saved after connect or disconnect',
+      records: sourceConnectionsCount,
+      lastUpdated: getStorageRecordUpdatedAt('source_connections', 'default'),
+      detail: 'Target to source links are stored in the backend repository.',
+    },
+    Mapping: {
+      storage: 'SQLite',
+      subject: 'Mapping',
+      persistence: 'Saved after mapping changes',
+      records: sourceMappingsCount,
+      mappedColumns: sourceMappingColumnsCount,
+      lastUpdated: getStorageRecordUpdatedAt('source_mappings', 'default'),
+      detail: 'Preview reads source files read-only; mapping rules are stored separately.',
+    },
+    Validation: {
+      storage: 'SQLite',
+      subject: 'Validation states',
+      persistence: 'Refreshed after access or validation checks',
+      records: getCollectionCount('validation_states'),
+      lastUpdated: null,
+      detail: 'Source files remain read-only while validation state is stored.',
+    },
+    Review: {
+      storage: 'SQLite',
+      subject: 'Review issues',
+      persistence: 'Saved as workflow records',
+      records: getCollectionCount('review_issues'),
+      lastUpdated: null,
+      detail: 'Imported previews remain local until promoted into workflow data.',
+    },
+    Decisions: {
+      storage: 'SQLite',
+      subject: 'Decisions',
+      persistence: 'Saved after decision changes',
+      records: getCollectionCount('decision_records'),
+      lastUpdated: null,
+      detail: 'Decision status and persistence state are stored in workflow state.',
+    },
+    Output: {
+      storage: 'SQLite',
+      subject: 'Output',
+      persistence: 'Saved after prepare output',
+      records: getCollectionCount('output_items'),
+      lastUpdated: null,
+      detail: 'Output state is stored separately from read-only source inputs.',
+    },
+    Main: {
+      storage: 'SQLite',
+      subject: 'Reviews',
+      persistence: 'Saved as review records',
+      records: getCollectionCount('reviews'),
+      lastUpdated: null,
+      detail: 'Main workspace reads the selected review context.',
+    },
+  }
+
+  return {
+    ...common,
+    ...(statusByStep[step] ?? {
+      storage: 'Planned',
+      subject: step,
+      persistence: 'Not implemented yet',
+      records: 0,
+      lastUpdated: null,
+      detail: 'This workflow section is not persisted yet.',
+    }),
   }
 }
 
@@ -306,6 +437,10 @@ export const workflowRepository = {
   getDecision: (issueId) => getRecord('decision_records', issueId),
   updateDecision: (decision) => updateRecord('decision_records', decision.issueId, decision),
   getOutputItem: (outputId) => getRecord('output_items', outputId),
+  getSourceConnections,
+  saveSourceConnections,
+  getSourceMappings,
+  saveSourceMappings,
   addAuditEvent,
   setIssuePersistenceState: (issueId, value) => setState('issue_persistence', issueId, value),
   setDecisionPersistenceState: (issueId, value) => setState('decision_persistence', issueId, value),
@@ -315,11 +450,14 @@ export const workflowRepository = {
   getWorkflowPayload,
 
   getTechnicalStatus,
+  getStorageStatus,
 
   getBootstrapPayload: () => ({
     reviews: listRecords('reviews'),
     sources: listRecords('sources'),
     validationStatesBySource: getValidationStates(),
+    sourceConnectionsByTarget: getSourceConnections(),
+    sourceMappingConfigs: getSourceMappings(),
     ...getWorkflowPayload(),
   }),
 }

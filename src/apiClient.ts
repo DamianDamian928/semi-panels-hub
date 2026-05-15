@@ -6,10 +6,13 @@ import type {
   OutputStatus,
   OutputItem,
   PersistenceState,
+  ProcessStep,
   ReviewIssue,
   SourceCreateInput,
+  SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
+  SourceMappingConfig,
   ValidationState,
 } from './types'
 
@@ -84,6 +87,33 @@ export type WorkflowPayload = {
   workflowView: WorkflowViewPayload
 }
 
+export type SourcePreviewPayload = {
+  sourceType: 'excel'
+  sheets: string[]
+  activeSheetName: string
+  headerRow: number
+  columns: string[]
+  rows: string[][]
+  rowLimit: number
+}
+
+export type StorageStatusPayload = {
+  step: string
+  storage: string
+  subject: string
+  persistence: string
+  records: number
+  mappedColumns?: number
+  lastUpdated: string | null
+  detail: string
+  refreshedAt: string
+  readOnlyInputs: boolean
+  database: {
+    engine: string
+    status: string
+  }
+}
+
 export type TechnicalStatus = {
   generatedAt: string
   app: {
@@ -149,13 +179,16 @@ type BootstrapResponse = WorkflowPayload & {
   reviews: DashboardRow[]
   sources: SourceDefinition[]
   validationStatesBySource: Record<string, { state: ValidationState; message: string }>
+  sourceConnectionsByTarget: SourceConnectionsByTarget | null
+  sourceMappingConfigs: Record<string, SourceMappingConfig>
 }
 
 const fetchJson = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${apiBaseUrl}${path}`)
 
   if (!response.ok) {
-    throw new ApiRequestError(`API request failed: ${response.status}`, response.status)
+    const payload = await response.json().catch(() => null) as { error?: string } | null
+    throw new ApiRequestError(payload?.error ?? `API request failed: ${response.status}`, response.status)
   }
 
   return (await response.json()) as T
@@ -193,6 +226,9 @@ export const fetchBootstrapData = () => fetchJson<BootstrapResponse>('/api/boots
 
 export const fetchTechnicalStatus = () => fetchJson<TechnicalStatus>('/api/technical-status')
 
+export const fetchStorageStatus = (step: ProcessStep) =>
+  fetchJson<StorageStatusPayload>(`/api/storage-status?step=${encodeURIComponent(step)}`)
+
 export const apiCreateSource = (source: SourceCreateInput) =>
   postJson<BootstrapResponse>('/api/sources', source)
 
@@ -206,6 +242,19 @@ export const apiCheckSourcesAccess = () => postJson<BootstrapResponse>('/api/sou
 
 export const apiCheckSourceAccess = (sourceId: string) =>
   postJson<BootstrapResponse>(`/api/sources/${encodeURIComponent(sourceId)}/check`, {})
+
+export const apiSaveSourceConnections = (connectionsByTarget: SourceConnectionsByTarget) =>
+  postJson<BootstrapResponse>('/api/source-connections', { connectionsByTarget })
+
+export const apiSaveSourceMappings = (mappingConfigs: Record<string, SourceMappingConfig>) =>
+  postJson<BootstrapResponse>('/api/source-mappings', { mappingConfigs })
+
+export const apiFetchSourcePreview = (sourceId: string, sheetName?: string) => {
+  const params = new URLSearchParams({ rowLimit: '100' })
+  if (sheetName) params.set('sheet', sheetName)
+
+  return fetchJson<SourcePreviewPayload>(`/api/sources/${encodeURIComponent(sourceId)}/preview?${params.toString()}`)
+}
 
 export const apiMarkIssueForDecision = (issueId: string) =>
   postJson<WorkflowPayload>('/api/workflow/mark-issue-for-decision', { issueId })

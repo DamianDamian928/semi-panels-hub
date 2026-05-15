@@ -1,250 +1,246 @@
-import type { BomStage, ConnectionTreeSection, MainStage, SourceDefinition } from '../../types'
-import type { EditableConnectionCard } from '../sharedReviewUi'
-import { formatFileModifiedAt, formatFileSize } from '../sharedReviewUi'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { DragEvent } from 'react'
+import type { ConnectionTargetId, SourceDefinition } from '../../types'
+import { connectionTargets, SourceTypeGlyph } from '../sharedReviewUi'
+
+type ConnectionsByTarget = Record<ConnectionTargetId, string[]>
 
 type ConnectionsStepProps = {
-  activeMainStage: MainStage
-  activeConnectionNodeId: string
-  activeConnectionSections: ConnectionTreeSection[]
-  activeConnectionCards: EditableConnectionCard[]
-  activeConnectionLabel: string
-  activeConnectionMainLabel: string
+  activeConnectionTargetId: ConnectionTargetId
+  connectionsByTarget: ConnectionsByTarget
   sourceDefinitions: SourceDefinition[]
-  onSelectConnectionNode: (nodeId: string, bomStage?: BomStage) => void
-  onAddConnectionCard: (stageId: string) => void
-  onRemoveConnectionCard: (stageId: string, cardId: string) => void
-  onChooseConnectionFile: (stageId: string, cardId: string) => void
+  onSelectConnectionTarget: (targetId: ConnectionTargetId) => void
+  onConnectSourceToTarget: (targetId: ConnectionTargetId, sourceId: string) => void
+  onDisconnectSourceFromTarget: (targetId: ConnectionTargetId, sourceId: string) => void
 }
 
-const nodeIdToBomStage = (nodeId: string): BomStage | undefined => {
-  if (nodeId === 'matvar') return 'MATVAR'
-  if (nodeId === 'l1') return 'L1'
-  if (nodeId === 'l2') return 'L2'
-  if (nodeId === 'l3') return 'L3'
-  return undefined
+const getStatusToken = (status: SourceDefinition['status']) => status.toLowerCase().replace(/\s+/g, '-')
+
+type ConnectionLinkGeometry = {
+  key: string
+  sourceY: number
+  targetY: number
+  isActive: boolean
 }
 
 export function ConnectionsStep({
-  activeMainStage,
-  activeConnectionNodeId,
-  activeConnectionSections,
-  activeConnectionCards,
-  activeConnectionLabel,
-  activeConnectionMainLabel,
+  activeConnectionTargetId,
+  connectionsByTarget,
   sourceDefinitions,
-  onSelectConnectionNode,
-  onAddConnectionCard,
-  onRemoveConnectionCard,
-  onChooseConnectionFile,
+  onSelectConnectionTarget,
+  onConnectSourceToTarget,
+  onDisconnectSourceFromTarget,
 }: ConnectionsStepProps) {
+  const [draggedSourceId, setDraggedSourceId] = useState<string | null>(null)
+  const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 })
+  const [linkGeometry, setLinkGeometry] = useState<ConnectionLinkGeometry[]>([])
+  const canvasRef = useRef<HTMLDivElement | null>(null)
+  const targetRefs = useRef<Partial<Record<ConnectionTargetId, HTMLButtonElement>>>({})
+  const sourceRefs = useRef<Record<string, HTMLElement>>({})
+  const sourceById = useMemo(
+    () => new Map(sourceDefinitions.map((source) => [source.id, source])),
+    [sourceDefinitions],
+  )
+  const activeTarget = connectionTargets.find((target) => target.id === activeConnectionTargetId) ?? connectionTargets[0]
+  const activeSourceIds = (connectionsByTarget[activeTarget.id] ?? []).filter((sourceId) => sourceById.has(sourceId))
+
+  const dropSourceOnTarget = (event: DragEvent<HTMLButtonElement>, targetId: ConnectionTargetId) => {
+    event.preventDefault()
+    const sourceId = event.dataTransfer.getData('text/plain')
+    if (sourceId) onConnectSourceToTarget(targetId, sourceId)
+    setDraggedSourceId(null)
+  }
+
+  const measureConnectionLinks = () => {
+    const canvasElement = canvasRef.current
+    if (!canvasElement) return
+
+    const canvasRect = canvasElement.getBoundingClientRect()
+    const nextGeometry: ConnectionLinkGeometry[] = []
+
+    connectionTargets.forEach((target) => {
+      const targetElement = targetRefs.current[target.id]
+      if (!targetElement) return
+
+      const targetRect = targetElement.getBoundingClientRect()
+      const targetY = targetRect.top + targetRect.height / 2 - canvasRect.top
+
+      ;(connectionsByTarget[target.id] ?? []).forEach((sourceId, linkIndex) => {
+        const sourceElement = sourceRefs.current[sourceId]
+        if (!sourceElement) return
+
+        const sourceRect = sourceElement.getBoundingClientRect()
+        const sourceY = sourceRect.top + sourceRect.height / 2 - canvasRect.top
+
+        nextGeometry.push({
+          key: `${target.id}-${sourceId}-${linkIndex}`,
+          targetY,
+          sourceY,
+          isActive: target.id === activeConnectionTargetId || sourceId === draggedSourceId,
+        })
+      })
+    })
+
+    setCanvasSize({
+      width: Math.max(canvasRect.width, 1),
+      height: Math.max(canvasRect.height, 1),
+    })
+    setLinkGeometry(nextGeometry)
+  }
+
+  useLayoutEffect(() => {
+    measureConnectionLinks()
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measureConnectionLinks)
+      return () => window.removeEventListener('resize', measureConnectionLinks)
+    }
+
+    const observedElements = [
+      canvasRef.current,
+      ...connectionTargets.map((target) => targetRefs.current[target.id]),
+      ...sourceDefinitions.map((source) => sourceRefs.current[source.id]),
+    ].filter(Boolean) as Element[]
+
+    const observer = new ResizeObserver(measureConnectionLinks)
+    observedElements.forEach((element) => observer.observe(element))
+    window.addEventListener('resize', measureConnectionLinks)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measureConnectionLinks)
+    }
+  }, [activeConnectionTargetId, connectionsByTarget, draggedSourceId, sourceDefinitions])
+
   return (
-    <section className="workspace-main-grid">
+    <section className="workspace-main-grid connections-workspace-grid">
       <section className="workspace-main card connections-stage">
-        <div className="connections-layout">
-          <aside className="connections-tree" aria-label="Connection groups">
-            {activeConnectionSections.map((section) => {
-              const sectionActive = section.items?.some((item) => item.id === activeConnectionNodeId) ?? section.id === activeConnectionNodeId
-              return (
-                <div key={section.id} className={`connection-group ${sectionActive ? 'connection-group-active' : ''}`}>
-                  <button type="button" className="connection-group-header">
-                    <span className="connection-group-arrow">&gt;</span>
-                    <span className="connection-group-ring" aria-hidden="true" />
-                    <span className="connection-group-title">[{section.label}]</span>
-                    <span className={`connection-group-dot ${sectionActive ? 'connection-group-dot-active' : ''}`} aria-hidden="true" />
-                  </button>
+        <div className="connections-header">
+          <div>
+            <p className="section-label">Connections</p>
+            <h3>Source connection map</h3>
+            <p>Connect registered sources to Dashboard, BOM levels, Documentation and Costing. One source can feed many targets.</p>
+          </div>
+        </div>
 
-                  {section.items?.length ? (
-                    <div className="connection-group-items">
-                      {section.items.map((item) => {
-                        const itemActive = item.id === activeConnectionNodeId
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            className={`connection-item ${itemActive ? 'connection-item-active' : ''}`}
-                            onClick={() => {
-                              onSelectConnectionNode(
-                                item.id,
-                                activeMainStage === 'BOM' ? nodeIdToBomStage(item.id) : undefined,
-                              )
-                            }}
-                          >
-                            <span className="connection-item-branch" aria-hidden="true" />
-                            <span className="connection-item-label">[{item.label}]</span>
-                            <span className={`connection-item-state ${itemActive ? 'connection-item-state-active' : ''}`} aria-hidden="true" />
-                          </button>
-                        )
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })}
-          </aside>
-
-          <section className="connections-content">
-            <div className="connections-header">
-              <div>
-                <p className="section-label">Connections</p>
-                <h3>Connection configuration for: {activeConnectionMainLabel} &gt; {activeConnectionLabel}</h3>
-                <p>Left side shows the heart of the app. Right side lets you choose which sources belong to the selected stage.</p>
-              </div>
+        <div className="connection-map" aria-label="Source connection map">
+          <div className="connection-map-column">
+            <div className="connection-map-column-head">
+              <span>Workflow targets</span>
+              <strong>{activeTarget.label}</strong>
             </div>
+            <div className="connection-target-list">
+              {connectionTargets.map((target) => {
+                const connectedIds = (connectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId))
+                const isActive = target.id === activeConnectionTargetId
+                const isDropTarget = Boolean(draggedSourceId)
 
-            <div className="connections-card-wrap">
-              <div className="connections-card-header">
-                <div className="connections-card-header-copy">
-                  <p className="section-label">Active data connections</p>
-                  <span className="connections-card-count">Sources in this stage: {activeConnectionCards.length}</span>
-                </div>
-                <button type="button" className="table-action" onClick={() => onAddConnectionCard(activeConnectionNodeId)}>
-                  Add source
-                </button>
-              </div>
-              <div className="connections-card-grid">
-                {activeConnectionCards.map((card) => (
-                  <article key={card.id} className="connection-source-card">
-                    <div className="connection-source-top">
-                      <div className="connection-source-brand">
-                        <div className={`connection-source-icon connection-source-icon-${card.status.toLowerCase().replace(/\s+/g, '-')}`} />
-                        <div>
-                          <h4>{card.title}</h4>
-                          <p>{card.subtitle}</p>
-                        </div>
-                      </div>
-                      <button type="button" className="connection-source-menu">...</button>
-                    </div>
-
-                    <dl className="connection-source-meta">
-                      <div>
-                        <dt>{card.line1Label}:</dt>
-                        <dd>{card.line1Value}</dd>
-                      </div>
-                      <div>
-                        <dt>{card.line2Label}:</dt>
-                        <dd>{card.line2Value}</dd>
-                      </div>
-                      <div>
-                        <dt>Status:</dt>
-                        <dd className={`connection-source-status connection-source-status-${card.status.toLowerCase().replace(/\s+/g, '-')}`}>
-                          <span className="connection-source-status-dot" />
-                          {card.status}
-                        </dd>
-                      </div>
-                    </dl>
-
-                    <div className="connection-source-actions">
-                      <div className="connection-file-row">
-                        <button
-                          type="button"
-                          className="connection-file-picker"
-                          disabled={card.fileSelectionPending}
-                          onClick={() => onChooseConnectionFile(activeConnectionNodeId, card.id)}
-                        >
-                          {card.fileSelectionPending ? 'Opening...' : 'Choose file'}
-                        </button>
-                        <p className="connection-file-note">
-                          {card.fileSelectionPending
-                            ? 'Opening file dialog...'
-                            : card.selectedFileName
-                              ? `Selected: ${card.selectedFileName}`
-                              : 'No file selected'}
-                        </p>
-                      </div>
-
-                      {card.selectedFilePath ? (
-                        <dl className="connection-file-details">
-                          <div>
-                            <dt>Name</dt>
-                            <dd>{card.selectedFileName}</dd>
-                          </div>
-                          <div>
-                            <dt>Path</dt>
-                            <dd>{card.selectedFilePath}</dd>
-                          </div>
-                          <div>
-                            <dt>Folder</dt>
-                            <dd>{card.selectedFileDirectory}</dd>
-                          </div>
-                          <div>
-                            <dt>Type</dt>
-                            <dd>{card.selectedFileExtension || 'No extension'}</dd>
-                          </div>
-                          <div>
-                            <dt>Size</dt>
-                            <dd>{formatFileSize(card.selectedFileSizeBytes ?? 0)}</dd>
-                          </div>
-                          <div>
-                            <dt>Modified</dt>
-                            <dd>{card.selectedFileModifiedAt ? formatFileModifiedAt(card.selectedFileModifiedAt) : 'Unknown'}</dd>
-                          </div>
-                        </dl>
-                      ) : null}
-
-                      {card.fileSelectionError ? (
-                        <p className="connection-file-error">{card.fileSelectionError}</p>
-                      ) : null}
-                    </div>
-
-                    <div className="connection-card-footer">
-                      <button
-                        type="button"
-                        className="table-action connection-remove-button"
-                        onClick={() => onRemoveConnectionCard(activeConnectionNodeId, card.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-
-              {activeConnectionCards.length === 0 ? (
-                <div className="connections-empty-state">
-                  <div>
-                    <h4>No sources in this stage</h4>
-                    <p>Add the first source tile for {activeConnectionMainLabel} &gt; {activeConnectionLabel}.</p>
-                  </div>
-                  <button type="button" className="table-action" onClick={() => onAddConnectionCard(activeConnectionNodeId)}>
-                    Add source
+                return (
+                  <button
+                    key={target.id}
+                    ref={(element) => {
+                      if (element) targetRefs.current[target.id] = element
+                      else delete targetRefs.current[target.id]
+                    }}
+                    type="button"
+                    className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''} ${isDropTarget ? 'connection-target-node-drop' : ''}`}
+                    onClick={() => onSelectConnectionTarget(target.id)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => dropSourceOnTarget(event, target.id)}
+                  >
+                    <span className="connection-node-main">
+                      <strong>{target.label}</strong>
+                      <small>{target.group}</small>
+                    </span>
+                    <span className="connection-node-count">{connectedIds.length}</span>
                   </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div ref={canvasRef} className="connection-canvas" aria-hidden="true">
+            <svg viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`} preserveAspectRatio="none">
+              {linkGeometry.map((link) => (
+                <path
+                  key={link.key}
+                  d={`M 8 ${link.targetY} C ${canvasSize.width * 0.34} ${link.targetY}, ${canvasSize.width * 0.66} ${link.sourceY}, ${canvasSize.width - 8} ${link.sourceY}`}
+                  className={`connection-link-path ${link.isActive ? 'connection-link-path-active' : ''}`}
+                />
+              ))}
+            </svg>
+          </div>
+
+          <div className="connection-map-column">
+            <div className="connection-map-column-head">
+              <span>Available sources</span>
+              <strong>{sourceDefinitions.length}</strong>
+            </div>
+            <div className="connection-source-list">
+              {sourceDefinitions.map((source) => {
+                const connectedToActive = activeSourceIds.includes(source.id)
+                const connectionCount = connectionTargets.filter((target) => (connectionsByTarget[target.id] ?? []).includes(source.id)).length
+                const statusToken = getStatusToken(source.status)
+
+                return (
+                  <article
+                    key={source.id}
+                    ref={(element) => {
+                      if (element) sourceRefs.current[source.id] = element
+                      else delete sourceRefs.current[source.id]
+                    }}
+                    className={`connection-source-node ${connectedToActive ? 'connection-source-node-active' : ''}`}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData('text/plain', source.id)
+                      event.dataTransfer.effectAllowed = 'copy'
+                      setDraggedSourceId(source.id)
+                    }}
+                    onDragEnd={() => setDraggedSourceId(null)}
+                  >
+                    <div className="connection-source-node-top">
+                      <span className={`source-type-icon source-type-icon-compact source-type-icon-${source.type.toLowerCase().replace(/\s+/g, '-')}`}>
+                        <SourceTypeGlyph type={source.type} className="source-type-glyph" />
+                      </span>
+                      <div>
+                        <h4>{source.sourceFile?.name ?? source.name}</h4>
+                        <p>{source.type} / {source.owner}</p>
+                      </div>
+                    </div>
+                    <div className="connection-source-node-meta">
+                      <span className={`source-status source-status-${statusToken}`}>
+                        <span className="source-status-dot" />
+                        {source.status}
+                      </span>
+                      <span>{connectionCount} links</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={`connection-node-action ${connectedToActive ? 'connection-node-action-remove' : ''}`}
+                      onClick={() => {
+                        if (connectedToActive) {
+                          onDisconnectSourceFromTarget(activeTarget.id, source.id)
+                        } else {
+                          onConnectSourceToTarget(activeTarget.id, source.id)
+                        }
+                      }}
+                    >
+                      {connectedToActive ? 'Disconnect' : `Connect to ${activeTarget.label}`}
+                    </button>
+                  </article>
+                )
+              })}
+
+              {sourceDefinitions.length === 0 ? (
+                <div className="connections-empty-state">
+                  <h4>No sources available</h4>
+                  <p>Add sources first, then return here to create connections.</p>
                 </div>
               ) : null}
             </div>
-          </section>
+          </div>
         </div>
       </section>
-
-      <aside className="workspace-side-panel card" aria-label="Context panel">
-        <div className="sidebar-header">
-          <p className="section-label">Step</p>
-          <h2>Connections</h2>
-          <p>Use the left side to choose the real stage. Use the right side to decide which sources belong there.</p>
-        </div>
-
-        <dl className="source-meta-list">
-          <div>
-            <dt>Selected area</dt>
-            <dd>{activeMainStage}</dd>
-          </div>
-          <div>
-            <dt>Selected stage</dt>
-            <dd>{activeConnectionLabel}</dd>
-          </div>
-          <div>
-            <dt>Available sources</dt>
-            <dd>{sourceDefinitions.length}</dd>
-          </div>
-          <div>
-            <dt>Sources in stage</dt>
-            <dd>{activeConnectionCards.length}</dd>
-          </div>
-          <div>
-            <dt>Mode</dt>
-            <dd>Manual source assignment</dd>
-          </div>
-        </dl>
-      </aside>
     </section>
   )
 }

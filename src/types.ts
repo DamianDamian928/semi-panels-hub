@@ -1,7 +1,7 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
 export type BomStage = 'MATVAR' | 'L1' | 'L2' | 'L3'
-export type ProcessStep = 'Main' | 'Sources' | 'Connections' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
+export type ProcessStep = 'Main' | 'Sources' | 'Connections' | 'Mapping' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings-sources' | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
@@ -9,6 +9,7 @@ export type SidebarIconName =
   | 'main'
   | 'sources'
   | 'connections'
+  | 'mapping'
   | 'validation'
   | 'normalization'
   | 'comparison'
@@ -95,6 +96,51 @@ export type ConnectionTreeSection = {
   id: string
   label: string
   items?: { id: string; label: string }[]
+}
+
+export type ConnectionTargetId =
+  | 'dashboard'
+  | 'bom-matvar'
+  | 'bom-l1'
+  | 'bom-l2'
+  | 'bom-l3'
+  | 'documentation'
+  | 'costing'
+
+export type ConnectionTarget = {
+  id: ConnectionTargetId
+  label: string
+  group: MainStage | 'Dashboard'
+  description: string
+}
+
+export type SourceConnectionsByTarget = Record<ConnectionTargetId, string[]>
+
+export type SourceConnectionRole = 'Primary' | 'Reference' | 'Validation' | 'Comparison'
+export type SourceMappingStatus = 'Needs mapping' | 'Ready' | 'Error'
+export type SourceMappingTransform = 'None' | 'Trim' | 'Uppercase' | 'Distinct'
+
+export type SourceColumnMapping = {
+  id: string
+  sheetName: string
+  sourceColumn: string
+  targetField: string
+  transform: SourceMappingTransform
+  required: boolean
+}
+
+export type SourceMappingConfig = {
+  id: string
+  targetId: ConnectionTargetId
+  sourceId: string
+  role: SourceConnectionRole
+  sheetName: string
+  keyColumn: string
+  partNumberColumn: string
+  quantityColumn: string
+  revisionColumn: string
+  status: SourceMappingStatus
+  columnMappings: SourceColumnMapping[]
 }
 
 export type ConnectionCard = {
