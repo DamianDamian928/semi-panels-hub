@@ -50,6 +50,20 @@ const fileTypeLabelByExtension: Record<string, string> = {
   txt: 'Text file',
 }
 
+const sourceTypeFallbackLabel: Record<SourceType, string> = {
+  File: 'Local file',
+  Folder: 'Folder',
+  SQL: 'SQL connection',
+  SharePoint: 'SharePoint location',
+  'Manual export': 'Manual export',
+}
+
+const getSourceApplicationTypeLabel = (source: SourceDefinition) => {
+  if (!source.sourceFile) return sourceTypeFallbackLabel[source.type]
+
+  return fileTypeLabelByExtension[source.sourceFile.extension.toLowerCase()] ?? 'Local file'
+}
+
 export function SourcesStep({
   sourceDefinitions,
   activeSourceId,
@@ -78,9 +92,6 @@ export function SourcesStep({
   const isSelectingSource = selectedSource ? sourceSelectionPendingId === selectedSource.id : false
   const isCheckingSelectedSource = selectedSource ? sourceAccessPendingId === selectedSource.id : false
   const selectedAccessCheck = selectedSource?.accessCheck
-  const selectedTypeLabel = selectedSourceFile
-    ? fileTypeLabelByExtension[selectedSourceFile.extension.toLowerCase()] ?? 'Local file'
-    : selectedSource?.type
 
   const updateDraftUsage = (usage: SourceUsage, enabled: boolean) => {
     setSourceDraft((current) => {
@@ -193,6 +204,7 @@ export function SourcesStep({
 
         <div className="source-registry-list" aria-label="Registered sources">
           <div className="source-registry-list-head" aria-hidden="true">
+            <span className="source-registry-icon-head" />
             <span>Source</span>
             <span>Type</span>
             <span>File size</span>
@@ -202,6 +214,7 @@ export function SourcesStep({
             const isActive = source.id === selectedSource.id
             const sourceStatusClass = source.status.toLowerCase().replace(/\s+/g, '-')
             const sourceDisplayName = source.sourceFile?.name ?? source.name
+            const sourceApplicationTypeLabel = getSourceApplicationTypeLabel(source)
 
             return (
               <button
@@ -210,15 +223,18 @@ export function SourcesStep({
                 className={`source-registry-row ${isActive ? 'source-registry-row-active' : ''}`}
                 onClick={() => onSelectSource(source.id)}
               >
+                <span className="source-registry-type" role="img" aria-label={source.type} title={source.type}>
+                  <span className={`source-type-icon source-type-icon-compact source-type-icon-${source.type.toLowerCase().replace(/\s+/g, '-')}`}>
+                    <SourceTypeGlyph type={source.type} className="source-type-glyph" />
+                  </span>
+                </span>
                 <span className="source-registry-name">
                   <span>
                     <strong>{sourceDisplayName}</strong>
                   </span>
                 </span>
-                <span className="source-registry-type" role="img" aria-label={source.type} title={source.type}>
-                  <span className={`source-type-icon source-type-icon-compact source-type-icon-${source.type.toLowerCase().replace(/\s+/g, '-')}`}>
-                    <SourceTypeGlyph type={source.type} className="source-type-glyph" />
-                  </span>
+                <span className="source-application-type" title={sourceApplicationTypeLabel}>
+                  {sourceApplicationTypeLabel}
                 </span>
                 <span className="source-file-size">
                   {source.sourceFile ? formatFileSize(source.sourceFile.sizeBytes) : '-'}
@@ -346,27 +362,15 @@ export function SourcesStep({
         ) : (
           <>
             <div className="source-connector-header">
-              <p className="section-label">Source configuration</p>
-              <h2>{selectedSource.name}</h2>
+              <div>
+                <p className="section-label">Source configuration</p>
+                <h2>{selectedSource.name}</h2>
+              </div>
+              <span className="source-panel-more" aria-hidden="true">...</span>
             </div>
 
-            <section className="source-connector-summary" aria-label="Selected source summary">
-              <div className="source-connector-top">
-                <span className={`source-type-icon source-type-icon-large source-type-icon-${selectedSource.type.toLowerCase().replace(/\s+/g, '-')}`}>
-                  <SourceTypeGlyph type={selectedSource.type} className="source-type-glyph" />
-                </span>
-                <div>
-                  <h3>{selectedSourceFile?.name ?? selectedSource.name}</h3>
-                  <p>{selectedSource.description}</p>
-                </div>
-              </div>
-            </section>
-
+            <p className="source-detail-section-title">Details</p>
             <dl className="source-property-list">
-              <div className="source-property-row">
-                <dt>Type</dt>
-                <dd>{selectedTypeLabel}</dd>
-              </div>
               <div className="source-property-row">
                 <dt>Status</dt>
                 <dd>
