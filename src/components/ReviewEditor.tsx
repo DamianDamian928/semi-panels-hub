@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
-import { parseDelimitedReviewSnapshot } from '../adapters/readOnlyReviewAdapter'
-import type { ReviewIssueAdapterResult } from '../adapters/readOnlyReviewAdapter'
+import { useState } from 'react'
 import type { WorkflowViewPayload } from '../apiClient'
 import type { OutputRow } from '../domain/workflowSelectors'
+import { useReviewImportPreview } from '../hooks/useReviewImportPreview'
+import { useSourceConnections } from '../hooks/useSourceConnections'
+import { useSourceMappings } from '../hooks/useSourceMappings'
+import { useSourceRegistry } from '../hooks/useSourceRegistry'
+import { useStorageStatus } from '../hooks/useStorageStatus'
 import type {
   AuditEvent,
   ApiConnectionState,
@@ -36,18 +38,15 @@ import {
   connectionsCustomStyles,
   bomStages,
   BrandGlyph,
-  localFileHelperEndpoint,
   mainStages,
   sidebarSteps,
   SidebarGlyph,
   statusClassName,
   validationStateClassName,
 } from './sharedReviewUi'
-import type { LocalFileSelection } from './sharedReviewUi'
-import { useStorageStatus } from '../hooks/useStorageStatus'
 import { ConnectionsStep } from './steps/ConnectionsStep'
 import { DecisionsStep } from './steps/DecisionsStep'
-import { createDefaultMappingConfig, createMappingId, MappingStep } from './steps/MappingStep'
+import { MappingStep } from './steps/MappingStep'
 import { OutputStep } from './steps/OutputStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { SourcesStep } from './steps/SourcesStep'
@@ -69,72 +68,6 @@ const connectionTargetByBomStage: Record<BomStage, ConnectionTargetId> = {
   L1: 'bom-l1',
   L2: 'bom-l2',
   L3: 'bom-l3',
-}
-
-const legacyConnectionsStorageKey = 'semi-panels-hub.connections.v1'
-const connectionTargetIds: ConnectionTargetId[] = [
-  'dashboard',
-  'bom-matvar',
-  'bom-l1',
-  'bom-l2',
-  'bom-l3',
-  'documentation',
-  'costing',
-]
-
-const normalizeConnectionsByTarget = (value: unknown): SourceConnectionsByTarget | null => {
-  if (!value || typeof value !== 'object') return null
-
-  return Object.fromEntries(
-    connectionTargetIds.map((targetId) => {
-      const sourceIds = (value as Partial<Record<ConnectionTargetId, unknown>>)[targetId]
-      return [
-        targetId,
-        Array.isArray(sourceIds)
-          ? sourceIds.filter((sourceId): sourceId is string => typeof sourceId === 'string')
-          : [],
-      ]
-    }),
-  ) as SourceConnectionsByTarget
-}
-
-const readLegacyConnectionsByTarget = () => {
-  try {
-    const storedValue = window.localStorage.getItem(legacyConnectionsStorageKey)
-    return storedValue ? normalizeConnectionsByTarget(JSON.parse(storedValue)) : null
-  } catch {
-    return null
-  }
-}
-
-const findSourceId = (sources: SourceDefinition[], ...nameParts: string[]) => {
-  const normalizedNameParts = nameParts.map((namePart) => namePart.toLowerCase())
-  return sources.find((source) => {
-    const sourceName = source.name.toLowerCase()
-    return normalizedNameParts.some((namePart) => sourceName.includes(namePart))
-  })?.id
-}
-
-const createInitialConnectionsByTarget = (sources: SourceDefinition[]): Record<ConnectionTargetId, string[]> => {
-  const fishbowl = findSourceId(sources, 'fishbowl')
-  const massProduction = findSourceId(sources, 'mass production')
-  const partsBom = findSourceId(sources, 'parts&bom', 'parts')
-  const matvar = findSourceId(sources, 'matvar')
-  const plm = findSourceId(sources, 'plm')
-  const boxDocs = findSourceId(sources, 'box documentation')
-  const sharepointDocs = findSourceId(sources, 'sharepoint documentation')
-
-  const compact = (sourceIds: Array<string | undefined>) => sourceIds.filter(Boolean) as string[]
-
-  return {
-    dashboard: compact([massProduction, partsBom]),
-    'bom-matvar': compact([matvar, partsBom]),
-    'bom-l1': compact([fishbowl, partsBom, plm]),
-    'bom-l2': compact([fishbowl, partsBom]),
-    'bom-l3': compact([plm]),
-    documentation: compact([boxDocs, sharepointDocs]),
-    costing: compact([massProduction]),
-  }
 }
 
 const nextStepByProcess: Record<ProcessStep, { title: string; description: string }> = {
@@ -354,29 +287,69 @@ export function ReviewEditor({
   const [activeMainStage, setActiveMainStage] = useState<MainStage>('BOM')
   const [activeBomStage, setActiveBomStage] = useState<BomStage>('MATVAR')
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStep>(activeStepByStatus[selectedReview.status])
-  const [activeSourceId, setActiveSourceId] = useState<string>(sourceDefinitions[0]?.id ?? '')
-  const [activeConnectionTargetId, setActiveConnectionTargetId] = useState<ConnectionTargetId>('dashboard')
   const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0]?.id ?? '')
   const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
   const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0]?.issueId ?? '')
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
   const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0]?.id ?? '')
   const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
-  const [reviewImportPreview, setReviewImportPreview] = useState<ReviewIssueAdapterResult | null>(null)
-  const [reviewImportError, setReviewImportError] = useState<string | null>(null)
-  const [sourceSelectionPendingId, setSourceSelectionPendingId] = useState<string | null>(null)
-  const [sourceAccessPendingId, setSourceAccessPendingId] = useState<string | null>(null)
-  const [sourceMutationPending, setSourceMutationPending] = useState(false)
-  const [sourcesAutoChecking, setSourcesAutoChecking] = useState(false)
-  const [sourceSelectionError, setSourceSelectionError] = useState<string | null>(null)
-  const [connectionsByTarget, setConnectionsByTarget] = useState<Record<ConnectionTargetId, string[]>>(() =>
-    sourceConnectionsByTarget ?? readLegacyConnectionsByTarget() ?? createInitialConnectionsByTarget(sourceDefinitions),
-  )
-  const [activeMappingId, setActiveMappingId] = useState<string>(() => createMappingId('dashboard', '1'))
-  const [mappingConfigs, setMappingConfigs] = useState<Record<string, SourceMappingConfig>>(() => sourceMappingConfigs)
-  const initialConnectionsSavedRef = useRef(false)
 
   const currentProcessStep = activeProcessStep
+  const {
+    activeSourceId,
+    setActiveSourceId,
+    sourceSelectionPendingId,
+    sourceAccessPendingId,
+    sourceMutationPending,
+    sourcesAutoChecking,
+    sourceSelectionError,
+    handleCreateSource,
+    handleDeleteSource,
+    handleSourceFileSelection,
+    handleSourceAccessCheck,
+  } = useSourceRegistry({
+    currentProcessStep,
+    sourceDefinitions,
+    createSource,
+    deleteSource,
+    registerSourceLocalFile,
+    checkSourcesAccess,
+    checkSourceAccess,
+  })
+  const {
+    activeConnectionTargetId,
+    setActiveConnectionTargetId,
+    connectionsByTarget,
+    connectSourceToTarget,
+    disconnectSourceFromTarget,
+  } = useSourceConnections({
+    sourceDefinitions,
+    sourceConnectionsByTarget,
+    saveSourceConnections,
+  })
+  const {
+    activeMappingId,
+    setActiveMappingId,
+    mappingConfigs,
+    updateMappingConfig,
+  } = useSourceMappings({
+    activeConnectionTargetId,
+    connectionsByTarget,
+    currentProcessStep,
+    sourceDefinitions,
+    sourceMappingConfigs,
+    saveSourceMappings,
+  })
+  const {
+    reviewImportPreview,
+    reviewImportError,
+    setReviewImportPreview,
+    setReviewImportError,
+    handleReviewImportFile,
+  } = useReviewImportPreview({
+    setActiveReviewIssueId,
+    setReviewIssueFilter,
+  })
   const {
     storageStatus,
     storageStatusLoading,
@@ -387,262 +360,6 @@ export function ReviewEditor({
   const activeStageInfo = stageDescriptions[activeMainStage]
   const currentScope = activeMainStage === 'BOM' ? `BOM / ${activeBomStage}` : activeMainStage
   const isMainStep = currentProcessStep === 'Main'
-
-  useEffect(() => {
-    if (currentProcessStep !== 'Sources') return
-
-    let cancelled = false
-    setSourcesAutoChecking(true)
-    setSourceSelectionError(null)
-
-    checkSourcesAccess()
-      .catch((error: unknown) => {
-        if (cancelled) return
-        setSourceSelectionError(
-          error instanceof Error
-            ? error.message
-            : 'Could not refresh source access status.',
-        )
-      })
-      .finally(() => {
-        if (!cancelled) setSourcesAutoChecking(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [currentProcessStep])
-
-  useEffect(() => {
-    const sourceIds = new Set(sourceDefinitions.map((source) => source.id))
-    setConnectionsByTarget((current) => {
-      let changed = false
-      const next = Object.fromEntries(
-        Object.entries(current).map(([targetId, connectedSourceIds]) => {
-          const filteredSourceIds = connectedSourceIds.filter((sourceId) => sourceIds.has(sourceId))
-          if (filteredSourceIds.length !== connectedSourceIds.length) changed = true
-          return [targetId, filteredSourceIds]
-        }),
-      ) as Record<ConnectionTargetId, string[]>
-
-      if (changed) void saveSourceConnections(next).catch(() => undefined)
-      return changed ? next : current
-    })
-  }, [sourceDefinitions])
-
-  useEffect(() => {
-    if (sourceConnectionsByTarget) setConnectionsByTarget(sourceConnectionsByTarget)
-  }, [sourceConnectionsByTarget])
-
-  useEffect(() => {
-    if (sourceConnectionsByTarget !== null || initialConnectionsSavedRef.current) return
-
-    initialConnectionsSavedRef.current = true
-    void saveSourceConnections(connectionsByTarget)
-      .then(() => {
-        window.localStorage.removeItem(legacyConnectionsStorageKey)
-      })
-      .catch(() => undefined)
-  }, [connectionsByTarget, sourceConnectionsByTarget])
-
-  useEffect(() => {
-    setMappingConfigs(sourceMappingConfigs)
-  }, [sourceMappingConfigs])
-
-  const connectSourceToTarget = (targetId: ConnectionTargetId, sourceId: string) => {
-    setConnectionsByTarget((current) => {
-      const currentSourceIds = current[targetId] ?? []
-      if (currentSourceIds.includes(sourceId)) return current
-
-      const next = {
-        ...current,
-        [targetId]: [...currentSourceIds, sourceId],
-      }
-      void saveSourceConnections(next).catch(() => undefined)
-      return next
-    })
-    setActiveConnectionTargetId(targetId)
-  }
-
-  const disconnectSourceFromTarget = (targetId: ConnectionTargetId, sourceId: string) => {
-    setConnectionsByTarget((current) => {
-      const next = {
-        ...current,
-        [targetId]: (current[targetId] ?? []).filter((connectedSourceId) => connectedSourceId !== sourceId),
-      }
-      void saveSourceConnections(next).catch(() => undefined)
-      return next
-    })
-  }
-
-  const updateMappingConfig = (mappingId: string, update: Partial<SourceMappingConfig>) => {
-    const [targetId, sourceId] = mappingId.split(':') as [ConnectionTargetId, string]
-
-    setMappingConfigs((current) => {
-      const next = {
-        ...current,
-        [mappingId]: {
-          ...(current[mappingId] ?? createDefaultMappingConfig(targetId, sourceId)),
-          ...update,
-          id: mappingId,
-          targetId,
-          sourceId,
-        },
-      }
-      void saveSourceMappings(next).catch(() => undefined)
-      return next
-    })
-  }
-
-  useEffect(() => {
-    if (currentProcessStep !== 'Mapping') return
-
-    const sourceIds = new Set(sourceDefinitions.map((source) => source.id))
-    const activeAvailableMappingIds = (connectionsByTarget[activeConnectionTargetId] ?? [])
-        .filter((sourceId) => sourceIds.has(sourceId))
-        .map((sourceId) => createMappingId(activeConnectionTargetId, sourceId))
-    const activeAvailableMappingIdSet = new Set(activeAvailableMappingIds)
-    const allAvailableMappingIdSet = new Set(
-      Object.entries(connectionsByTarget).flatMap(([targetId, connectedSourceIds]) =>
-        connectedSourceIds
-          .filter((sourceId) => sourceIds.has(sourceId))
-          .map((sourceId) => createMappingId(targetId as ConnectionTargetId, sourceId)),
-      ),
-    )
-
-    if (!activeAvailableMappingIdSet.has(activeMappingId)) {
-      setActiveMappingId(activeAvailableMappingIds[0] ?? '')
-    }
-
-    setMappingConfigs((current) => {
-      let changed = false
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([mappingId]) => {
-          const keep = allAvailableMappingIdSet.has(mappingId)
-          if (!keep) changed = true
-          return keep
-        }),
-      ) as Record<string, SourceMappingConfig>
-
-      if (changed) void saveSourceMappings(next).catch(() => undefined)
-      return changed ? next : current
-    })
-  }, [activeConnectionTargetId, activeMappingId, connectionsByTarget, currentProcessStep, sourceDefinitions])
-
-  const handleSourceFileSelection = async (sourceId: string) => {
-    setSourceSelectionPendingId(sourceId)
-    setSourceSelectionError(null)
-
-    try {
-      const response = await fetch(localFileHelperEndpoint)
-      if (!response.ok) throw new Error('Local file helper did not respond correctly.')
-
-      const result = (await response.json()) as {
-        cancelled?: boolean
-        file?: LocalFileSelection
-        error?: string
-      }
-
-      if (result.cancelled) return
-      if (!result.file) throw new Error(result.error ?? 'No file was returned by the local helper.')
-
-      await registerSourceLocalFile(sourceId, result.file)
-      await checkSourceAccess(sourceId)
-    } catch (error) {
-      setSourceSelectionError(
-        error instanceof Error
-          ? error.message
-          : 'Could not save this source location.',
-      )
-    } finally {
-      setSourceSelectionPendingId(null)
-    }
-  }
-
-  const handleSourceAccessCheck = async (sourceId: string) => {
-    setSourceAccessPendingId(sourceId)
-    setSourceSelectionError(null)
-
-    try {
-      await checkSourceAccess(sourceId)
-    } catch (error) {
-      setSourceSelectionError(
-        error instanceof Error
-          ? error.message
-          : 'Could not check this source access.',
-      )
-    } finally {
-      setSourceAccessPendingId(null)
-    }
-  }
-
-  const handleCreateSource = async (source: SourceCreateInput) => {
-    setSourceMutationPending(true)
-    setSourceSelectionError(null)
-
-    try {
-      const nextSources = await createSource(source)
-      const addedSource = nextSources.find((item) => item.name === source.name) ?? nextSources[nextSources.length - 1]
-      if (addedSource) setActiveSourceId(addedSource.id)
-    } catch (error) {
-      setSourceSelectionError(
-        error instanceof Error
-          ? error.message
-          : 'Could not add this source.',
-      )
-      throw error
-    } finally {
-      setSourceMutationPending(false)
-    }
-  }
-
-  const handleDeleteSource = async (sourceId: string) => {
-    const source = sourceDefinitions.find((item) => item.id === sourceId)
-    if (!source) return
-
-    const confirmed = window.confirm(`Remove source "${source.name}" from the registry? This will not delete any files.`)
-    if (!confirmed) return
-
-    setSourceMutationPending(true)
-    setSourceSelectionError(null)
-
-    try {
-      const nextSources = await deleteSource(sourceId)
-      setActiveSourceId(nextSources[0]?.id ?? '')
-    } catch (error) {
-      setSourceSelectionError(
-        error instanceof Error
-          ? error.message
-          : 'Could not remove this source.',
-      )
-    } finally {
-      setSourceMutationPending(false)
-    }
-  }
-
-  const handleReviewImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    try {
-      const text = await file.text()
-      const importedAt = new Date().toLocaleString()
-      const result = parseDelimitedReviewSnapshot(file.name, text, importedAt)
-
-      setReviewImportPreview(result)
-      setReviewImportError(null)
-      setReviewIssueFilter('All')
-
-      if (result.issues[0]) {
-        setActiveReviewIssueId(result.issues[0].id)
-      }
-    } catch {
-      setReviewImportPreview(null)
-      setReviewImportError('Could not read this file. Use a CSV or TSV export for the first read-only preview.')
-    } finally {
-      event.target.value = ''
-    }
-  }
 
   const renderSourceNamesStep = (
     stepName: Exclude<ProcessStep, 'Main' | 'Connections'>,

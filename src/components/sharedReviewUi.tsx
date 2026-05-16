@@ -337,18 +337,6 @@ export type EditableConnectionCard = ConnectionCard & {
   fileSelectionPending?: boolean
 }
 
-export type LocalFileSelection = {
-  name: string
-  path: string
-  directory: string
-  extension: string
-  sizeBytes: number
-  modifiedAt: string
-}
-
-export const localFileHelperEndpoint = 'http://127.0.0.1:8787/api/local-file-dialog'
-export const localFileOpenLocationEndpoint = 'http://127.0.0.1:8787/api/open-local-location'
-
 export const formatFileSize = (sizeBytes: number) => {
   if (sizeBytes < 1024) return `${sizeBytes} B`
   if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import { localFileOpenLocationEndpoint } from '../../localFileHelper'
 import type { SourceCreateInput, SourceDefinition, SourceType, SourceUsage } from '../../types'
-import { formatFileModifiedAt, formatFileSize, localFileOpenLocationEndpoint, SourceTypeGlyph } from '../sharedReviewUi'
+import { formatFileModifiedAt, formatFileSize, SourceTypeGlyph } from '../sharedReviewUi'
 
 type SourcesStepProps = {
   sourceDefinitions: SourceDefinition[]

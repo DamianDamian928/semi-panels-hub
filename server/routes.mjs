@@ -15,6 +15,14 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 }
+const maxJsonBodyBytes = 5 * 1024 * 1024
+
+class RequestBodyTooLargeError extends Error {
+  constructor() {
+    super('Request body is too large. Limit is 5 MB.')
+    this.name = 'RequestBodyTooLargeError'
+  }
+}
 
 const sendJson = (response, statusCode, payload) => {
   response.writeHead(statusCode, {
@@ -27,12 +35,25 @@ const sendJson = (response, statusCode, payload) => {
 const readJsonBody = (request) =>
   new Promise((resolve, reject) => {
     let body = ''
+    let receivedBytes = 0
+    let bodyTooLarge = false
 
     request.on('data', (chunk) => {
+      if (bodyTooLarge) return
+
+      receivedBytes += chunk.length
+      if (receivedBytes > maxJsonBodyBytes) {
+        bodyTooLarge = true
+        reject(new RequestBodyTooLargeError())
+        return
+      }
+
       body += chunk
     })
 
     request.on('end', () => {
+      if (bodyTooLarge) return
+
       if (!body) {
         resolve({})
         return
@@ -45,8 +66,19 @@ const readJsonBody = (request) =>
       }
     })
 
-    request.on('error', reject)
+    request.on('error', (error) => {
+      if (!bodyTooLarge) reject(error)
+    })
   })
+
+const sendJsonBodyError = (response, error) => {
+  if (error instanceof RequestBodyTooLargeError) {
+    sendJson(response, 413, { error: error.message })
+    return
+  }
+
+  sendJson(response, 400, { error: 'Invalid JSON body' })
+}
 
 const isLocalFilePayload = (file) =>
   file &&
@@ -236,8 +268,8 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     try {
       body = await readJsonBody(request)
-    } catch {
-      sendJson(response, 400, { error: 'Invalid JSON body' })
+    } catch (error) {
+      sendJsonBodyError(response, error)
       return
     }
 
@@ -302,8 +334,8 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     try {
       body = await readJsonBody(request)
-    } catch {
-      sendJson(response, 400, { error: 'Invalid JSON body' })
+    } catch (error) {
+      sendJsonBodyError(response, error)
       return
     }
 
@@ -322,8 +354,8 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     try {
       body = await readJsonBody(request)
-    } catch {
-      sendJson(response, 400, { error: 'Invalid JSON body' })
+    } catch (error) {
+      sendJsonBodyError(response, error)
       return
     }
 
@@ -400,8 +432,8 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     try {
       body = await readJsonBody(request)
-    } catch {
-      sendJson(response, 400, { error: 'Invalid JSON body' })
+    } catch (error) {
+      sendJsonBodyError(response, error)
       return
     }
 
@@ -454,8 +486,8 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     try {
       body = await readJsonBody(request)
-    } catch {
-      sendJson(response, 400, { error: 'Invalid JSON body' })
+    } catch (error) {
+      sendJsonBodyError(response, error)
       return
     }
 

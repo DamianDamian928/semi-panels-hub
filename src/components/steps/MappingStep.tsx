@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiFetchSourcePreview } from '../../apiClient'
 import type { SourcePreviewPayload } from '../../apiClient'
+import { createColumnMapping, createDefaultMappingConfig, createMappingId } from '../../domain/sourceMapping'
 import type {
   ConnectionTargetId,
   SourceColumnMapping,
@@ -40,34 +41,6 @@ const targetFieldOptions = [
   'Revision',
   'UoM',
 ]
-
-export const createMappingId = (targetId: ConnectionTargetId, sourceId: string) => `${targetId}:${sourceId}`
-
-export const createDefaultMappingConfig = (
-  targetId: ConnectionTargetId,
-  sourceId: string,
-): SourceMappingConfig => ({
-  id: createMappingId(targetId, sourceId),
-  targetId,
-  sourceId,
-  role: 'Reference',
-  sheetName: '',
-  keyColumn: '',
-  partNumberColumn: '',
-  quantityColumn: '',
-  revisionColumn: '',
-  status: 'Needs mapping',
-  columnMappings: [],
-})
-
-const createColumnMapping = (sheetName: string, sourceColumn: string): SourceColumnMapping => ({
-  id: `${sheetName}:${sourceColumn}`,
-  sheetName,
-  sourceColumn,
-  targetField: '',
-  transform: 'Trim',
-  required: true,
-})
 
 export function MappingStep({
   activeMappingId,
