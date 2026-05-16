@@ -12,6 +12,7 @@ import type {
   SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
+  SourceReadStatus,
   SourceMappingConfig,
   ValidationState,
 } from './types'
@@ -181,6 +182,11 @@ type BootstrapResponse = WorkflowPayload & {
   validationStatesBySource: Record<string, { state: ValidationState; message: string }>
   sourceConnectionsByTarget: SourceConnectionsByTarget | null
   sourceMappingConfigs: Record<string, SourceMappingConfig>
+  sourceReadStatus: SourceReadStatus
+}
+
+type BootstrapRequestOptions = {
+  forceSourceRead?: boolean
 }
 
 const fetchJson = async <T>(path: string): Promise<T> => {
@@ -194,17 +200,40 @@ const fetchJson = async <T>(path: string): Promise<T> => {
   return (await response.json()) as T
 }
 
-const postJson = async <T>(path: string, body: unknown): Promise<T> => {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  })
+type RequestOptions = {
+  timeoutMs?: number
+}
+
+const postJson = async <T>(path: string, body: unknown, options: RequestOptions = {}): Promise<T> => {
+  const controller = options.timeoutMs ? new AbortController() : undefined
+  const timeoutId = options.timeoutMs
+    ? setTimeout(() => controller?.abort(), options.timeoutMs)
+    : undefined
+
+  let response: Response
+
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller?.signal,
+    })
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiRequestError(`API request timed out after ${options.timeoutMs} ms`, 408)
+    }
+
+    throw error
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
-    throw new ApiRequestError(`API request failed: ${response.status}`, response.status)
+    const payload = await response.json().catch(() => null) as { error?: string } | null
+    throw new ApiRequestError(payload?.error ?? `API request failed: ${response.status}`, response.status)
   }
 
   return (await response.json()) as T
@@ -222,7 +251,13 @@ const deleteJson = async <T>(path: string): Promise<T> => {
   return (await response.json()) as T
 }
 
-export const fetchBootstrapData = () => fetchJson<BootstrapResponse>('/api/bootstrap')
+export const fetchBootstrapData = (options: BootstrapRequestOptions = {}) => {
+  const params = new URLSearchParams()
+  if (options.forceSourceRead) params.set('sourceRead', 'force')
+  const query = params.toString()
+
+  return fetchJson<BootstrapResponse>(`/api/bootstrap${query ? `?${query}` : ''}`)
+}
 
 export const fetchTechnicalStatus = () => fetchJson<TechnicalStatus>('/api/technical-status')
 
@@ -248,6 +283,9 @@ export const apiSaveSourceConnections = (connectionsByTarget: SourceConnectionsB
 
 export const apiSaveSourceMappings = (mappingConfigs: Record<string, SourceMappingConfig>) =>
   postJson<BootstrapResponse>('/api/source-mappings', { mappingConfigs })
+
+export const apiApplyMapping = (mappingId: string, mappingConfig: SourceMappingConfig) =>
+  postJson<BootstrapResponse>('/api/mappings/apply', { mappingId, mappingConfig }, { timeoutMs: 30000 })
 
 export const apiFetchSourcePreview = (sourceId: string, sheetName?: string) => {
   const params = new URLSearchParams({ rowLimit: '100' })

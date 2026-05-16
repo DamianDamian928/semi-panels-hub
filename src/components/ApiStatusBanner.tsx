@@ -3,6 +3,7 @@ import type { ApiConnectionState } from '../types'
 type ApiStatusBannerProps = {
   state: ApiConnectionState
   error: string | null
+  onRefresh?: () => void
 }
 
 const apiStatusContent: Record<ApiConnectionState, { label: string; title: string; message: string }> = {
@@ -28,9 +29,10 @@ const apiStatusContent: Record<ApiConnectionState, { label: string; title: strin
   },
 }
 
-export function ApiStatusBanner({ state, error }: ApiStatusBannerProps) {
+export function ApiStatusBanner({ state, error, onRefresh }: ApiStatusBannerProps) {
   const content = apiStatusContent[state]
   const message = error ?? content.message
+  const canRefresh = Boolean(onRefresh) && (state === 'error' || state === 'offline')
 
   return (
     <section className={`api-status-banner api-status-banner-${state}`} aria-live="polite" title={message}>
@@ -42,6 +44,11 @@ export function ApiStatusBanner({ state, error }: ApiStatusBannerProps) {
         </div>
       </div>
       <p>{message}</p>
+      {canRefresh ? (
+        <button type="button" className="api-status-refresh" onClick={onRefresh}>
+          Retry
+        </button>
+      ) : null}
     </section>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetchSourcePreview } from '../../apiClient'
 import type { SourcePreviewPayload } from '../../apiClient'
 import { createColumnMapping, createDefaultMappingConfig, createMappingId } from '../../domain/sourceMapping'
@@ -21,6 +21,7 @@ type MappingStepProps = {
   sourceDefinitions: SourceDefinition[]
   onSelectMapping: (mappingId: string) => void
   onUpdateMapping: (mappingId: string, update: Partial<SourceMappingConfig>) => void
+  onApplyMapping: (mappingId: string, mappingConfig: SourceMappingConfig) => Promise<void>
 }
 
 type MappingRow = {
@@ -32,10 +33,14 @@ type MappingRow = {
 const roleOptions: SourceConnectionRole[] = ['Primary', 'Reference', 'Validation', 'Comparison']
 const statusOptions: SourceMappingStatus[] = ['Needs mapping', 'Ready', 'Error']
 const transformOptions: SourceMappingTransform[] = ['None', 'Trim', 'Uppercase', 'Distinct']
+const createColumnSelectionKey = (sheetName: string, sourceColumn: string) => `${sheetName}:${sourceColumn}`
 const targetFieldOptions = [
   'Intel Model Number',
   'Customer',
   'Forecast Qty',
+  'Status',
+  'Owner',
+  'Last Updated',
   'Part Number',
   'Description',
   'Revision',
@@ -50,6 +55,7 @@ export function MappingStep({
   sourceDefinitions,
   onSelectMapping,
   onUpdateMapping,
+  onApplyMapping,
 }: MappingStepProps) {
   const [studioOpen, setStudioOpen] = useState(false)
   const [activeSheetName, setActiveSheetName] = useState<string | null>(null)
@@ -57,6 +63,10 @@ export function MappingStep({
   const [sourcePreview, setSourcePreview] = useState<SourcePreviewPayload | null>(null)
   const [sourcePreviewLoading, setSourcePreviewLoading] = useState(false)
   const [sourcePreviewError, setSourcePreviewError] = useState<string | null>(null)
+  const [mappingApplyPending, setMappingApplyPending] = useState(false)
+  const [mappingApplyMessage, setMappingApplyMessage] = useState<string | null>(null)
+  const [mappingApplyError, setMappingApplyError] = useState<string | null>(null)
+  const isMountedRef = useRef(true)
   const sourceById = useMemo(
     () => new Map(sourceDefinitions.map((source) => [source.id, source])),
     [sourceDefinitions],
@@ -84,14 +94,24 @@ export function MappingStep({
 
   const activeRow = mappingRows.find((row) => row.config.id === activeMappingId) ?? mappingRows[0]
   const activeColumnMappings = activeRow?.config.columnMappings ?? []
-  const selectedColumnNames = new Set(activeColumnMappings.map((mapping) => mapping.sourceColumn))
+  const activeSourceLabel = activeRow?.source.sourceFile?.name ?? activeRow?.source.name ?? ''
+  const selectedColumnKeys = new Set(activeColumnMappings.map((mapping) => createColumnSelectionKey(mapping.sheetName, mapping.sourceColumn)))
   const previewColumns = sourcePreview?.columns ?? []
   const previewRows = sourcePreview?.rows ?? []
   const previewSheets = sourcePreview?.sheets ?? []
-  const selectedSheetName = sourcePreview?.activeSheetName ?? activeSheetName ?? ''
+  const selectedSheetName = activeSheetName ?? sourcePreview?.activeSheetName ?? ''
   const visiblePreviewRows = previewRows.filter((row) =>
     row.some((cell) => cell.toLowerCase().includes(filterText.toLowerCase())),
   )
+  const canApplyMapping = Boolean(activeRow && activeColumnMappings.length > 0)
+
+  useEffect(() => {
+    isMountedRef.current = true
+
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!studioOpen || !activeRow) return
@@ -167,6 +187,29 @@ export function MappingStep({
       status: 'Needs mapping',
       columnMappings: [],
     })
+  }
+
+  const applyActiveMapping = async () => {
+    if (!activeRow || !canApplyMapping) return
+
+    setMappingApplyPending(true)
+    setMappingApplyMessage(null)
+    setMappingApplyError(null)
+
+    try {
+      await onApplyMapping(activeRow.config.id, activeRow.config)
+      if (!isMountedRef.current) return
+      setMappingApplyMessage(
+        activeRow.config.targetId === 'dashboard'
+          ? 'Dashboard was rebuilt from selected columns.'
+          : 'Mapping was saved as ready for this workflow target.',
+      )
+    } catch (error: unknown) {
+      if (!isMountedRef.current) return
+      setMappingApplyError(error instanceof Error ? error.message : 'Mapping could not be applied.')
+    } finally {
+      if (isMountedRef.current) setMappingApplyPending(false)
+    }
   }
 
   return (
@@ -267,7 +310,7 @@ export function MappingStep({
                 <strong>Selected columns</strong>
                 {activeColumnMappings.length ? (
                   activeColumnMappings.map((mapping) => (
-                    <span key={mapping.id}>{mapping.sheetName}.{mapping.sourceColumn}</span>
+                    <span key={mapping.id}>{activeSourceLabel} / {mapping.sheetName} / {mapping.sourceColumn}</span>
                   ))
                 ) : (
                   <p>No columns selected yet.</p>
@@ -297,82 +340,115 @@ export function MappingStep({
               </button>
             </div>
 
-            <div className="mapping-studio-toolbar" aria-label="Mapping Studio toolbar">
-              <button type="button">Select</button>
-              <button type="button" onClick={() => onUpdateMapping(activeRow.config.id, { status: 'Ready' })}>Save mapping</button>
-              <button type="button" onClick={deleteActiveMappingConfig}>Delete mapping</button>
-              <button type="button" onClick={() => setFilterText('')}>Clear filter</button>
-              <label>
-                <span>Find</span>
-                <input
-                  type="search"
-                  value={filterText}
-                  onChange={(event) => setFilterText(event.target.value)}
-                  placeholder="Search preview"
-                />
-              </label>
-            </div>
-
             <div className="mapping-studio-body">
-              <aside className="mapping-studio-sheets" aria-label="Workbook sheets">
-                <span>Sheets</span>
-                {previewSheets.map((sheetName) => (
-                  <button
-                    key={sheetName}
-                    type="button"
-                    className={sheetName === selectedSheetName ? 'mapping-studio-sheet-active' : ''}
-                    onClick={() => setActiveSheetName(sheetName)}
-                  >
-                    {sheetName}
-                  </button>
-                ))}
-                {sourcePreviewLoading ? <p>Loading preview...</p> : null}
-                {sourcePreviewError ? <p className="mapping-studio-error">{sourcePreviewError}</p> : null}
-              </aside>
+              <section className="mapping-studio-registry" aria-label="Workbook preview">
+                <div className="mapping-studio-registry-header">
+                  <div>
+                    <p className="section-label">Sheets</p>
+                    <h3>Workbook preview</h3>
+                  </div>
+                  <div className="mapping-studio-toolbar" aria-label="Mapping Studio toolbar">
+                    <button type="button" onClick={() => onUpdateMapping(activeRow.config.id, { status: 'Ready' })}>Save mapping</button>
+                    <button
+                      type="button"
+                      className="mapping-studio-primary-action"
+                      onClick={() => {
+                        void applyActiveMapping()
+                      }}
+                      disabled={!canApplyMapping || mappingApplyPending}
+                    >
+                      {mappingApplyPending ? 'Applying...' : 'Apply mapping'}
+                    </button>
+                    <button type="button" className="mapping-studio-danger-action" onClick={deleteActiveMappingConfig}>Delete mapping</button>
+                    <button type="button" onClick={() => setFilterText('')}>Clear filter</button>
+                    <label>
+                      <span>Find</span>
+                      <input
+                        type="search"
+                        value={filterText}
+                        onChange={(event) => setFilterText(event.target.value)}
+                        placeholder="Search preview"
+                      />
+                    </label>
+                  </div>
+                </div>
 
-              <section className="mapping-studio-grid-wrap" aria-label="Source preview">
-                {sourcePreviewLoading ? (
-                  <div className="mapping-preview-message">Loading source preview...</div>
-                ) : sourcePreviewError ? (
-                  <div className="mapping-preview-message">{sourcePreviewError}</div>
-                ) : previewColumns.length ? (
-                <div className="mapping-studio-grid">
-                  <div
-                    className="mapping-studio-grid-header"
-                    style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(180px, 220px))` }}
-                  >
-                    {previewColumns.map((column) => (
+                <div className="mapping-studio-registry-content">
+                  <aside className="mapping-studio-sheets" aria-label="Workbook sheets">
+                    <span>Sheets</span>
+                    {previewSheets.map((sheetName) => (
                       <button
-                        key={column}
+                        key={sheetName}
                         type="button"
-                        className={selectedColumnNames.has(column) ? 'mapping-preview-column-selected' : ''}
-                        onClick={() => toggleColumnMapping(column)}
+                        className={sheetName === selectedSheetName ? 'mapping-studio-sheet-active' : ''}
+                        onClick={() => setActiveSheetName(sheetName)}
                       >
-                        {column}
+                        <span>{sheetName}</span>
                       </button>
                     ))}
-                  </div>
-                  {visiblePreviewRows.map((row, rowIndex) => (
-                    <div
-                      key={`${row[0]}-${rowIndex}`}
-                      className="mapping-studio-grid-row"
-                      style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(180px, 220px))` }}
-                    >
-                      {previewColumns.map((_, cellIndex) => (
-                        <span key={`${row[cellIndex] ?? ''}-${cellIndex}`}>{row[cellIndex] ?? ''}</span>
+                    {sourcePreviewLoading ? <p>Loading preview...</p> : null}
+                    {sourcePreviewError ? <p className="mapping-studio-error">{sourcePreviewError}</p> : null}
+                  </aside>
+
+                  <section className="mapping-studio-grid-wrap" aria-label="Source preview">
+                    {sourcePreviewLoading ? (
+                      <div className="mapping-preview-message">Loading source preview...</div>
+                    ) : sourcePreviewError ? (
+                      <div className="mapping-preview-message">{sourcePreviewError}</div>
+                    ) : previewColumns.length ? (
+                    <div className="mapping-studio-grid">
+                      <div
+                        className="mapping-studio-grid-header"
+                        style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(180px, 220px))` }}
+                      >
+                        {previewColumns.map((column) => (
+                          <button
+                            key={column}
+                            type="button"
+                            className={selectedColumnKeys.has(createColumnSelectionKey(selectedSheetName, column)) ? 'mapping-preview-column-selected' : ''}
+                            onClick={() => toggleColumnMapping(column)}
+                          >
+                            {column}
+                          </button>
+                        ))}
+                      </div>
+                      {visiblePreviewRows.map((row, rowIndex) => (
+                        <div
+                          key={`${row[0]}-${rowIndex}`}
+                          className="mapping-studio-grid-row"
+                          style={{ gridTemplateColumns: `repeat(${previewColumns.length}, minmax(180px, 220px))` }}
+                        >
+                          {previewColumns.map((column, cellIndex) => (
+                            <span
+                              key={`${row[cellIndex] ?? ''}-${cellIndex}`}
+                              className={selectedColumnKeys.has(createColumnSelectionKey(selectedSheetName, column)) ? 'mapping-preview-cell-selected' : ''}
+                            >
+                              {row[cellIndex] ?? ''}
+                            </span>
+                          ))}
+                        </div>
                       ))}
                     </div>
-                  ))}
+                    ) : (
+                      <div className="mapping-preview-message">No preview data available for this source.</div>
+                    )}
+                  </section>
                 </div>
-                ) : (
-                  <div className="mapping-preview-message">No preview data available for this source.</div>
-                )}
               </section>
 
               <aside className="mapping-studio-selection" aria-label="Selected columns">
+                <div className="mapping-studio-selection-header">
+                  <div>
+                    <p className="section-label">Column configuration</p>
+                    <h3>{activeColumnMappings[0]?.sourceColumn ?? 'No column selected'}</h3>
+                  </div>
+                  <button type="button" onClick={() => setStudioOpen(false)}>Close</button>
+                </div>
                 <span>Selected columns</span>
                 {activeColumnMappings.map((mapping) => (
                   <div key={mapping.id} className="mapping-selected-column">
+                    <span className="mapping-selected-column-context">{activeSourceLabel}</span>
+                    <span className="mapping-selected-column-context">{mapping.sheetName}</span>
                     <strong>{mapping.sourceColumn}</strong>
                     <label>
                       <span>Map to</span>
@@ -419,6 +495,8 @@ export function MappingStep({
               <span>{selectedSheetName || 'No sheet selected'}</span>
               <span>{visiblePreviewRows.length} rows shown</span>
               {sourcePreview ? <span>Header row {sourcePreview.headerRow}</span> : null}
+              {mappingApplyMessage ? <span>{mappingApplyMessage}</span> : null}
+              {mappingApplyError ? <span className="mapping-studio-error">{mappingApplyError}</span> : null}
             </div>
           </div>
         </div>

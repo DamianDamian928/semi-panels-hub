@@ -2,7 +2,7 @@ export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
 export type BomStage = 'MATVAR' | 'L1' | 'L2' | 'L3'
 export type ProcessStep = 'Main' | 'Sources' | 'Connections' | 'Mapping' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
-export type AppView = 'dashboard' | 'settings-sources' | 'review-editor'
+export type AppView = 'dashboard' | 'settings' | 'settings-diagnostics' | 'settings-design-template' | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
 export type SidebarIconName =
@@ -30,6 +30,17 @@ export type DashboardRow = {
   status: ReviewStatus
   owner: string
   lastUpdated: string
+  dashboardColumns?: string[]
+  dashboardCells?: Record<string, string>
+}
+
+export type SourceReadStatus = {
+  status: string
+  sourceReadAt: string | null
+  sourceReadAtLabel: string | null
+  sourceModifiedAt: string | null
+  sourceFileName: string | null
+  message: string
 }
 
 export type StepPurposeContent = {

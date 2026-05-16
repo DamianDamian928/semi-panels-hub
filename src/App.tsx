@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
+import { DesignTemplatePanel } from './components/DesignTemplatePanel'
 import { ReviewEditor } from './components/ReviewEditor'
+import { SettingsPanel } from './components/SettingsPanel'
 import { TechnicalStatusPanel } from './components/TechnicalStatusPanel'
 import { useTechnicalStatus } from './hooks/useTechnicalStatus'
 import { useWorkflowData } from './hooks/useWorkflowData'
@@ -17,14 +19,32 @@ export default function App() {
     technicalStatusRefreshing,
     technicalStatusFetchedAt,
     refreshTechnicalStatus,
-  } = useTechnicalStatus(appView === 'settings-sources')
+  } = useTechnicalStatus(appView === 'settings-diagnostics')
 
   const selectedReview = useMemo(
     () => workflowData.dashboardRows.find((row) => row.id === selectedReviewId) ?? null,
     [selectedReviewId, workflowData.dashboardRows],
   )
 
-  if (appView === 'settings-sources') {
+  if (appView === 'settings') {
+    return (
+      <SettingsPanel
+        onOpenDiagnostics={() => setAppView('settings-diagnostics')}
+        onOpenDesignTemplate={() => setAppView('settings-design-template')}
+        onBackToDashboard={() => setAppView('dashboard')}
+      />
+    )
+  }
+
+  if (appView === 'settings-design-template') {
+    return (
+      <DesignTemplatePanel
+        onBackToSettings={() => setAppView('settings')}
+      />
+    )
+  }
+
+  if (appView === 'settings-diagnostics') {
     return (
       <TechnicalStatusPanel
         technicalStatus={technicalStatus}
@@ -34,7 +54,7 @@ export default function App() {
         onRefresh={() => {
           void refreshTechnicalStatus()
         }}
-        onBackToDashboard={() => setAppView('dashboard')}
+        onBackToSettings={() => setAppView('settings')}
       />
     )
   }
@@ -70,6 +90,7 @@ export default function App() {
         checkSourceAccess={workflowData.checkSourceAccess}
         saveSourceConnections={workflowData.saveSourceConnections}
         saveSourceMappings={workflowData.saveSourceMappings}
+        applyMapping={workflowData.applyMapping}
         markIssueForDecision={workflowData.markIssueForDecision}
         saveDecisionStatus={workflowData.setDecisionStatus}
         savePreparedOutput={workflowData.prepareOutput}
@@ -84,11 +105,13 @@ export default function App() {
       isAdmin={isAdmin}
       apiConnectionState={workflowData.apiConnectionState}
       apiConnectionError={workflowData.apiConnectionError}
+      sourceReadStatus={workflowData.sourceReadStatus}
+      onRefreshApi={workflowData.refreshBootstrapData}
       onOpenReview={(reviewId) => {
         setSelectedReviewId(reviewId)
         setAppView('review-editor')
       }}
-      onOpenSettings={() => setAppView('settings-sources')}
+      onOpenSettings={() => setAppView('settings')}
     />
   )
 }

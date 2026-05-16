@@ -149,6 +149,235 @@ const checkedAtLabel = (checkedAt) => checkedAt
 const getSourcePath = (source) => source.sourceFile?.path
 
 const previewableFileExtensions = new Set(['xlsx', 'xlsm'])
+const reviewStatuses = new Set(['Draft', 'In progress', 'Completed'])
+
+const formatSourceReadAt = (date) => {
+  const pad = (value) => String(value).padStart(2, '0')
+
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join('-') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const normalizeDashboardField = (value) => String(value ?? '').trim().toLowerCase()
+
+const applyMappingTransform = (value, transform) => {
+  const text = String(value ?? '')
+
+  if (transform === 'Uppercase') return text.trim().toUpperCase()
+  if (transform === 'Trim' || transform === 'Distinct') return text.trim()
+  return text
+}
+
+const makeUniqueColumnLabel = (label, usedLabels) => {
+  let nextLabel = label
+  let index = 2
+
+  while (usedLabels.has(nextLabel)) {
+    nextLabel = `${label} ${index}`
+    index += 1
+  }
+
+  usedLabels.add(nextLabel)
+  return nextLabel
+}
+
+const buildDashboardRowsFromMapping = (mapping, preview) => {
+  const selectedMappings = mapping.columnMappings.filter((columnMapping) => columnMapping.sheetName === preview.activeSheetName)
+  const columnEntries = []
+  const usedLabels = new Set()
+
+  selectedMappings.forEach((columnMapping) => {
+    const columnIndex = preview.columns.indexOf(columnMapping.sourceColumn)
+    if (columnIndex < 0) return
+
+    const preferredLabel = columnMapping.targetField?.trim() || columnMapping.sourceColumn
+    columnEntries.push({
+      ...columnMapping,
+      columnIndex,
+      label: makeUniqueColumnLabel(preferredLabel, usedLabels),
+      normalizedTargetField: normalizeDashboardField(columnMapping.targetField),
+    })
+  })
+
+  if (columnEntries.length === 0) {
+    throw new Error('Selected mapping columns were not found in the source preview.')
+  }
+
+  const dashboardColumns = columnEntries.map((entry) => entry.label)
+  const today = new Date().toISOString().slice(0, 10)
+
+  return preview.rows
+    .map((row, rowIndex) => {
+      const cells = Object.fromEntries(
+        columnEntries.map((entry) => [
+          entry.label,
+          applyMappingTransform(row[entry.columnIndex], entry.transform),
+        ]),
+      )
+      const getByTargetField = (fieldName) => {
+        const entry = columnEntries.find((candidate) => candidate.normalizedTargetField === normalizeDashboardField(fieldName))
+        return entry ? cells[entry.label] : ''
+      }
+      const intelModel = getByTargetField('Intel Model Number') || Object.values(cells).find((value) => value.trim()) || `Dashboard row ${rowIndex + 1}`
+      const status = getByTargetField('Status')
+
+      return {
+        id: `dashboard-${mapping.sourceId}-${rowIndex + 1}`,
+        intelModel,
+        status: reviewStatuses.has(status) ? status : 'Draft',
+        owner: getByTargetField('Owner') || 'Unassigned',
+        lastUpdated: getByTargetField('Last Updated') || today,
+        dashboardColumns,
+        dashboardCells: cells,
+      }
+    })
+    .filter((row) => Object.values(row.dashboardCells).some((value) => value.trim()))
+}
+
+const isDashboardMappingReady = (mapping) =>
+  mapping &&
+  mapping.targetId === 'dashboard' &&
+  typeof mapping.sourceId === 'string' &&
+  Array.isArray(mapping.columnMappings) &&
+  mapping.columnMappings.length > 0
+
+const validateDashboardSource = async (source) => {
+  const sourcePath = getSourcePath(source)
+  const extension = source?.sourceFile?.extension?.toLowerCase()
+
+  if (!sourcePath || !extension) {
+    throw new Error('This source does not have a local file registered.')
+  }
+
+  if (!previewableFileExtensions.has(extension)) {
+    throw new Error('Applying this mapping is currently available for .xlsx and .xlsm files.')
+  }
+
+  const fileStats = await stat(sourcePath)
+  await access(sourcePath, constants.R_OK)
+
+  return {
+    sourcePath,
+    fileStats,
+  }
+}
+
+const rebuildDashboardFromMapping = async (mapping, mappingConfigs) => {
+  const source = workflowRepository.getSource(mapping.sourceId)
+
+  if (!source) {
+    throw new Error('Source not found')
+  }
+
+  const { sourcePath, fileStats } = await validateDashboardSource(source)
+  const selectedSheetName = mapping.columnMappings[0]?.sheetName || mapping.sheetName
+  const preview = await readExcelPreview(sourcePath, {
+    sheetName: selectedSheetName,
+    rowLimit: 500,
+  })
+  const dashboardRows = buildDashboardRowsFromMapping(mapping, preview)
+
+  if (dashboardRows.length === 0) {
+    throw new Error('The selected columns do not contain dashboard rows.')
+  }
+
+  const sourceReadAt = new Date()
+
+  workflowRepository.saveReviews(dashboardRows)
+  workflowRepository.saveSourceMappings({
+    ...mappingConfigs,
+    [mapping.id]: {
+      ...mapping,
+      sheetName: preview.activeSheetName,
+      status: 'Ready',
+    },
+  })
+  workflowRepository.saveDashboardSourceReadStatus({
+    status: 'Fresh',
+    mappingId: mapping.id,
+    sourceId: source.id,
+    sourceFileName: source.sourceFile?.name ?? source.name,
+    sourcePath,
+    sourceModifiedAt: fileStats.mtime.toISOString(),
+    sourceSizeBytes: fileStats.size,
+    sourceReadAt: sourceReadAt.toISOString(),
+    sourceReadAtLabel: formatSourceReadAt(sourceReadAt),
+    rows: dashboardRows.length,
+    message: 'Dashboard source was read successfully.',
+  })
+
+  return {
+    dashboardRows,
+    preview,
+  }
+}
+
+let dashboardRefreshInFlight = null
+
+const ensureDashboardSourceFresh = async ({ forceRead = false } = {}) => {
+  if (dashboardRefreshInFlight) return dashboardRefreshInFlight
+
+  dashboardRefreshInFlight = (async () => {
+    const mappingConfigs = workflowRepository.getSourceMappings()
+    const mapping = Object.values(mappingConfigs).find(isDashboardMappingReady)
+
+    if (!mapping) {
+      workflowRepository.saveDashboardSourceReadStatus({
+        status: 'Mapping missing',
+        message: 'Dashboard source read is waiting for a dashboard mapping.',
+      })
+      return
+    }
+
+    const source = workflowRepository.getSource(mapping.sourceId)
+
+    if (!source) {
+      workflowRepository.saveDashboardSourceReadStatus({
+        status: 'Source unavailable',
+        mappingId: mapping.id,
+        sourceId: mapping.sourceId,
+        message: 'Dashboard source was not found.',
+      })
+      return
+    }
+
+    try {
+      const { sourcePath, fileStats } = await validateDashboardSource(source)
+      const currentStatus = workflowRepository.getDashboardSourceReadStatus()
+      const sourceModifiedAt = fileStats.mtime.toISOString()
+      const sourceUnchanged =
+        currentStatus.mappingId === mapping.id &&
+        currentStatus.sourceId === source.id &&
+        currentStatus.sourceModifiedAt === sourceModifiedAt &&
+        currentStatus.sourceSizeBytes === fileStats.size &&
+        currentStatus.status === 'Fresh'
+
+      if (sourceUnchanged && !forceRead) return
+
+      await rebuildDashboardFromMapping(mapping, mappingConfigs)
+    } catch (error) {
+      workflowRepository.saveDashboardSourceReadStatus({
+        status: 'Source unavailable',
+        mappingId: mapping.id,
+        sourceId: source.id,
+        sourceFileName: source.sourceFile?.name ?? source.name,
+        sourcePath: getSourcePath(source) ?? null,
+        message: error instanceof Error
+          ? error.message
+          : 'Dashboard source could not be read.',
+      })
+    }
+  })()
+
+  try {
+    await dashboardRefreshInFlight
+  } finally {
+    dashboardRefreshInFlight = null
+  }
+}
 
 const checkSourceAccess = async (source) => {
   const checkedAt = new Date().toISOString()
@@ -259,6 +488,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
   const routeKey = `${request.method} ${url.pathname}`
 
   if (routeKey === 'GET /api/bootstrap') {
+    await ensureDashboardSourceFresh({ forceRead: url.searchParams.get('sourceRead') === 'force' })
     sendJson(response, 200, workflowRepository.getBootstrapPayload())
     return
   }
@@ -366,6 +596,59 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     workflowRepository.saveSourceMappings(body.mappingConfigs)
     sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/mappings/apply') {
+    let body
+
+    try {
+      body = await readJsonBody(request)
+    } catch (error) {
+      sendJsonBodyError(response, error)
+      return
+    }
+
+    const mappingConfigs = workflowRepository.getSourceMappings()
+    const mapping = body?.mappingConfig ?? mappingConfigs[body?.mappingId]
+
+    if (
+      !mapping ||
+      typeof mapping !== 'object' ||
+      typeof mapping.id !== 'string' ||
+      !connectionTargetIds.has(mapping.targetId) ||
+      typeof mapping.sourceId !== 'string' ||
+      !Array.isArray(mapping.columnMappings) ||
+      mapping.columnMappings.length === 0
+    ) {
+      sendJson(response, 400, { error: 'A mapping with selected columns is required.' })
+      return
+    }
+
+    if (mapping.targetId !== 'dashboard') {
+      workflowRepository.saveSourceMappings({
+        ...mappingConfigs,
+        [mapping.id]: {
+          ...mapping,
+          sheetName: mapping.sheetName || mapping.columnMappings[0]?.sheetName || '',
+          status: 'Ready',
+        },
+      })
+      sendJson(response, 200, workflowRepository.getBootstrapPayload())
+      return
+    }
+
+    try {
+      await rebuildDashboardFromMapping(mapping, mappingConfigs)
+      sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    } catch (error) {
+      sendJson(response, 500, {
+        error: error instanceof Error
+          ? error.message
+          : 'Dashboard mapping could not be applied.',
+      })
+    }
+
     return
   }
 

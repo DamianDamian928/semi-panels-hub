@@ -60,6 +60,10 @@ const deleteRecordStatement = db.prepare(`
   DELETE FROM app_records
   WHERE collection = ? AND record_id = ?
 `)
+const deleteCollectionStatement = db.prepare(`
+  DELETE FROM app_records
+  WHERE collection = ?
+`)
 const nextRecordPositionStatement = db.prepare(`
   SELECT COALESCE(MAX(position), -1) + 1 AS position
   FROM app_records
@@ -156,6 +160,19 @@ const deleteRecord = (collection, id) => {
   deleteRecordStatement.run(collection, id)
 }
 
+const replaceCollection = (collection, records, getRecordId) => {
+  db.exec('BEGIN')
+
+  try {
+    deleteCollectionStatement.run(collection)
+    insertSeedCollection(collection, records, getRecordId)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 const getStateMap = (kind) =>
   Object.fromEntries(listStateStatement.all(kind).map((row) => [row.record_id, row.value]))
 
@@ -211,6 +228,24 @@ const saveSourceMappings = (mappingConfigs) => {
   upsertRecord('source_mappings', 'default', {
     mappingConfigs,
     updatedAt: new Date().toISOString(),
+  }, 0)
+}
+
+const getDashboardSourceReadStatus = () =>
+  getRecord('dashboard_source_read_status', 'default') ?? {
+    status: 'Not configured',
+    sourceReadAt: null,
+    sourceReadAtLabel: null,
+    sourceModifiedAt: null,
+    sourceFileName: null,
+    message: 'Dashboard source has not been read yet.',
+  }
+
+const saveDashboardSourceReadStatus = (status) => {
+  upsertRecord('dashboard_source_read_status', 'default', {
+    ...getDashboardSourceReadStatus(),
+    ...status,
+    checkedAt: new Date().toISOString(),
   }, 0)
 }
 
@@ -416,6 +451,7 @@ export const workflowRepository = {
   }),
 
   getReviews: () => listRecords('reviews'),
+  saveReviews: (reviewRows) => replaceCollection('reviews', reviewRows, (record) => record.id),
   getSources: () => listRecords('sources'),
   getSource: (sourceId) => getRecord('sources', sourceId),
   addSource: (source) => {
@@ -441,6 +477,8 @@ export const workflowRepository = {
   saveSourceConnections,
   getSourceMappings,
   saveSourceMappings,
+  getDashboardSourceReadStatus,
+  saveDashboardSourceReadStatus,
   addAuditEvent,
   setIssuePersistenceState: (issueId, value) => setState('issue_persistence', issueId, value),
   setDecisionPersistenceState: (issueId, value) => setState('decision_persistence', issueId, value),
@@ -458,6 +496,7 @@ export const workflowRepository = {
     validationStatesBySource: getValidationStates(),
     sourceConnectionsByTarget: getSourceConnections(),
     sourceMappingConfigs: getSourceMappings(),
+    sourceReadStatus: getDashboardSourceReadStatus(),
     ...getWorkflowPayload(),
   }),
 }

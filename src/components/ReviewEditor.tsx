@@ -244,6 +244,7 @@ type ReviewEditorProps = {
   checkSourceAccess: (sourceId: string) => Promise<void>
   saveSourceConnections: (connectionsByTarget: SourceConnectionsByTarget) => Promise<void>
   saveSourceMappings: (mappingConfigs: Record<string, SourceMappingConfig>) => Promise<void>
+  applyMapping: (mappingId: string, mappingConfig: SourceMappingConfig) => Promise<void>
   markIssueForDecision: (issue: ReviewIssue) => Promise<void>
   saveDecisionStatus: (decision: DecisionRecord, status: DecisionStatus) => Promise<void>
   savePreparedOutput: (outputItem: OutputRow) => Promise<void>
@@ -279,6 +280,7 @@ export function ReviewEditor({
   checkSourceAccess,
   saveSourceConnections,
   saveSourceMappings,
+  applyMapping,
   markIssueForDecision,
   saveDecisionStatus,
   savePreparedOutput,
@@ -713,6 +715,7 @@ export function ReviewEditor({
           sourceDefinitions={sourceDefinitions}
           onSelectMapping={setActiveMappingId}
           onUpdateMapping={updateMappingConfig}
+          onApplyMapping={applyMapping}
         />
       )
     }

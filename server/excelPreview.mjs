@@ -144,7 +144,7 @@ const getCellValue = (cellXml, sharedStrings) => {
   return decodeXml(rawValue)
 }
 
-const readRows = (sheetXml, sharedStrings) => {
+const readRows = (sheetXml, sharedStrings, maxRows = Number.POSITIVE_INFINITY) => {
   const rows = []
 
   for (const rowMatch of sheetXml.matchAll(/<row\b[^>]*\br="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
@@ -162,6 +162,7 @@ const readRows = (sheetXml, sharedStrings) => {
 
     if (cells.some((value) => value !== undefined && value !== '')) {
       rows.push({ rowNumber, cells: cells.map((value) => value ?? '') })
+      if (rows.length >= maxRows) break
     }
   }
 
@@ -203,7 +204,7 @@ export const readExcelPreview = async (filePath, options = {}) => {
   const sheetXml = zip.getText(selectedSheet.path)
   if (!sheetXml) throw new Error(`Sheet "${selectedSheet.name}" could not be read.`)
 
-  const rows = readRows(sheetXml, sharedStrings)
+  const rows = readRows(sheetXml, sharedStrings, rowLimit + 25)
   const headerRow = chooseHeaderRow(rows)
   const headerRowIndex = headerRow?.rowNumber ?? 1
   const columnCount = Math.max(...rows.map((row) => row.cells.length), headerRow?.cells.length ?? 0, 0)

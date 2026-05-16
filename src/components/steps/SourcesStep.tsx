@@ -82,6 +82,7 @@ export function SourcesStep({
   const [sourceDraft, setSourceDraft] = useState<SourceCreateInput>(() => createEmptySourceDraft())
   const [sourceFormError, setSourceFormError] = useState<string | null>(null)
   const [sourceOpenLocationError, setSourceOpenLocationError] = useState<string | null>(null)
+  const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false)
   const selectedSource = sourceDefinitions.find((source) => source.id === activeSourceId) ?? sourceDefinitions[0]
   const readyCount = sourceDefinitions.filter((source) => source.status === 'Ready').length
   const needsLocationCount = sourceDefinitions.filter((source) => source.status === 'Needs location').length
@@ -124,6 +125,7 @@ export function SourcesStep({
     })
     setSourceDraft(createEmptySourceDraft())
     setIsAddingSource(false)
+    setIsDetailPanelOpen(false)
   }
 
   const openSelectedSourceLocation = async () => {
@@ -151,7 +153,7 @@ export function SourcesStep({
   }
 
   return (
-    <section className="sources-registry-grid">
+    <section className={`sources-registry-grid ${isDetailPanelOpen ? 'sources-registry-grid-with-detail' : ''}`}>
       <section className="workspace-main card sources-registry-main">
         <div className="sources-registry-header">
           <div>
@@ -166,6 +168,7 @@ export function SourcesStep({
               onClick={() => {
                 setSourceFormError(null)
                 setIsAddingSource(true)
+                setIsDetailPanelOpen(true)
               }}
             >
               Add source
@@ -221,7 +224,11 @@ export function SourcesStep({
                 key={source.id}
                 type="button"
                 className={`source-registry-row ${isActive ? 'source-registry-row-active' : ''}`}
-                onClick={() => onSelectSource(source.id)}
+                onClick={() => {
+                  onSelectSource(source.id)
+                  setIsAddingSource(false)
+                  setIsDetailPanelOpen(true)
+                }}
               >
                 <span className="source-registry-type" role="img" aria-label={source.type} title={source.type}>
                   <span className={`source-type-icon source-type-icon-compact source-type-icon-${source.type.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -255,15 +262,30 @@ export function SourcesStep({
         </div>
       </section>
 
+      {isDetailPanelOpen ? (
       <aside className="workspace-side-panel card source-detail-panel" aria-label="Selected source details">
         {isAddingSource || !selectedSource ? (
           <form className="source-form" onSubmit={(event) => {
             void submitNewSource(event).catch(() => undefined)
           }}>
-            <div className="sidebar-header">
-              <p className="section-label">New source</p>
-              <h2>Add source</h2>
-              <p>Create a read-only source registry entry. File selection and access checks happen after the source is added.</p>
+            <div className="source-connector-header">
+              <div>
+                <p className="section-label">New source</p>
+                <h2>Add source</h2>
+                <p>Create a read-only source registry entry. File selection and access checks happen after the source is added.</p>
+              </div>
+              <button
+                type="button"
+                className="source-detail-close-button"
+                aria-label="Close source panel"
+                onClick={() => {
+                  setSourceFormError(null)
+                  setIsAddingSource(false)
+                  setIsDetailPanelOpen(false)
+                }}
+              >
+                Close
+              </button>
             </div>
 
             <label className="source-form-field">
@@ -353,6 +375,7 @@ export function SourcesStep({
                 onClick={() => {
                   setSourceFormError(null)
                   setIsAddingSource(false)
+                  setIsDetailPanelOpen(false)
                 }}
               >
                 Cancel
@@ -366,7 +389,14 @@ export function SourcesStep({
                 <p className="section-label">Source configuration</p>
                 <h2>{selectedSource.name}</h2>
               </div>
-              <span className="source-panel-more" aria-hidden="true">...</span>
+              <button
+                type="button"
+                className="source-detail-close-button"
+                aria-label="Close source panel"
+                onClick={() => setIsDetailPanelOpen(false)}
+              >
+                Close
+              </button>
             </div>
 
             <p className="source-detail-section-title">Details</p>
@@ -449,6 +479,7 @@ export function SourcesStep({
           </>
         )}
       </aside>
+      ) : null}
     </section>
   )
 }

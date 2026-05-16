@@ -90,16 +90,6 @@ const buildDiagnosticSections = (
         { label: 'Database', value: status.backend.database.engine, tone: 'OK', detail: status.backend.database.path },
       ],
     },
-    {
-      title: 'Data',
-      rows: [
-        { label: 'Reviews', value: String(status.data.reviews), tone: 'INFO', detail: `${status.data.sources} sources registered.` },
-        { label: 'Review issues', value: String(status.data.reviewIssues), tone: status.workflow.highSeverityIssues > 0 ? 'WARN' : 'OK', detail: `${status.workflow.openIssues} open, ${status.workflow.highSeverityIssues} high severity.` },
-        { label: 'Decisions', value: String(status.data.decisions), tone: status.workflow.needsDecision > 0 ? 'WARN' : 'OK', detail: `${status.workflow.needsDecision} issues still need decision.` },
-        { label: 'Output', value: String(status.data.outputItems), tone: status.workflow.blockedOutputItems > 0 ? 'WARN' : 'OK', detail: `${status.workflow.readyOutputItems} ready, ${status.workflow.blockedOutputItems} blocked.` },
-        { label: 'Audit', value: String(status.data.auditEvents), tone: status.workflow.notPersistedAuditEvents > 0 ? 'WARN' : 'OK', detail: `${status.workflow.notPersistedAuditEvents} not persisted.` },
-      ],
-    },
   ]
 }
 
@@ -127,7 +117,7 @@ type TechnicalStatusPanelProps = {
   technicalStatusRefreshing: boolean
   technicalStatusFetchedAt: string | null
   onRefresh: () => void
-  onBackToDashboard: () => void
+  onBackToSettings: () => void
 }
 
 export function TechnicalStatusPanel({
@@ -136,7 +126,7 @@ export function TechnicalStatusPanel({
   technicalStatusRefreshing,
   technicalStatusFetchedAt,
   onRefresh,
-  onBackToDashboard,
+  onBackToSettings,
 }: TechnicalStatusPanelProps) {
   const currentTechnicalRuntimeNotes = buildTechnicalRuntimeNotes(technicalStatus)
   const diagnosticSections = buildDiagnosticSections(technicalStatus, technicalStatusError)
@@ -159,8 +149,8 @@ export function TechnicalStatusPanel({
           >
             {technicalStatusRefreshing ? 'Refreshing...' : 'Refresh'}
           </button>
-          <button type="button" className="header-button" onClick={onBackToDashboard}>
-            Back to Dashboard
+          <button type="button" className="header-button" onClick={onBackToSettings}>
+            Back to Settings
           </button>
         </div>
       </header>
@@ -226,21 +216,20 @@ export function TechnicalStatusPanel({
               </div>
             </article>
           ))}
-        </section>
-
-        <section className="diagnostic-panel diagnostic-panel-wide" aria-label="Developer commands">
-          <header className="diagnostic-panel-header">
-            <h2>Commands</h2>
-            <span>{currentTechnicalRuntimeNotes.length} entries</span>
-          </header>
-          <dl className="diagnostic-command-table">
-            {currentTechnicalRuntimeNotes.map((note) => (
-              <div key={note.label}>
-                <dt>{note.label}</dt>
-                <dd>{note.value}</dd>
-              </div>
-            ))}
-          </dl>
+          <article className="diagnostic-panel diagnostic-panel-commands" aria-label="Developer commands">
+            <header className="diagnostic-panel-header">
+              <h2>Commands</h2>
+              <span>{currentTechnicalRuntimeNotes.length} entries</span>
+            </header>
+            <dl className="diagnostic-command-table">
+              {currentTechnicalRuntimeNotes.map((note) => (
+                <div key={note.label}>
+                  <dt>{note.label}</dt>
+                  <dd>{note.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
         </section>
       </main>
     </div>

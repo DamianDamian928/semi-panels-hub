@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   ApiRequestError,
+  apiApplyMapping,
   apiCheckSourceAccess,
   apiCheckSourcesAccess,
   apiCreateSource,
@@ -45,6 +46,7 @@ import type {
   SourceDefinition,
   SourceFileMetadata,
   SourceMappingConfig,
+  SourceReadStatus,
 } from '../types'
 
 const getApiFailureState = (error: unknown): ApiConnectionState =>
@@ -79,6 +81,7 @@ export const useWorkflowData = () => {
   const [apiConnectionError, setApiConnectionError] = useState<string | null>(null)
   const [sourceConnectionsByTarget, setSourceConnectionsByTarget] = useState<SourceConnectionsByTarget | null>(null)
   const [sourceMappingConfigs, setSourceMappingConfigs] = useState<Record<string, SourceMappingConfig>>({})
+  const [sourceReadStatus, setSourceReadStatus] = useState<SourceReadStatus | null>(null)
 
   const applyWorkflowPayload = (payload: WorkflowPayload) => {
     setReviewIssues(payload.reviewIssues)
@@ -104,33 +107,53 @@ export const useWorkflowData = () => {
     setValidationStatesBySource(data.validationStatesBySource)
     setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
     setSourceMappingConfigs(data.sourceMappingConfigs)
+    setSourceReadStatus(data.sourceReadStatus)
     applyWorkflowPayload(data)
+  }
+
+  const applyFallbackPayload = () => {
+    setDashboardRows(fallbackDashboardRows)
+    setSourceDefinitions(fallbackSourceDefinitions)
+    setValidationStatesBySource(fallbackValidationStatesBySource)
+    setReviewIssues(fallbackReviewIssues)
+    setDecisionRecords(fallbackDecisionRecords)
+    setOutputItems(fallbackOutputItems)
+    setAuditEvents(fallbackAuditEvents)
+    setWorkflowView(null)
+    setSourceConnectionsByTarget(null)
+    setSourceMappingConfigs({})
+    setSourceReadStatus(null)
+  }
+
+  const refreshBootstrapData = async () => {
+    setApiConnectionState('loading')
+    setApiConnectionError(null)
+
+    try {
+      applyBootstrapPayload(await fetchBootstrapData({ forceSourceRead: true }))
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
+      applyFallbackPayload()
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Using demo data.'))
+      throw error
+    }
   }
 
   useEffect(() => {
     let isMounted = true
 
-    fetchBootstrapData()
+    fetchBootstrapData({ forceSourceRead: true })
       .then((data) => {
         if (!isMounted) return
-
         applyBootstrapPayload(data)
         setApiConnectionState('ready')
         setApiConnectionError(null)
       })
       .catch((error: unknown) => {
         if (!isMounted) return
-
-        setDashboardRows(fallbackDashboardRows)
-        setSourceDefinitions(fallbackSourceDefinitions)
-        setValidationStatesBySource(fallbackValidationStatesBySource)
-        setReviewIssues(fallbackReviewIssues)
-        setDecisionRecords(fallbackDecisionRecords)
-        setOutputItems(fallbackOutputItems)
-        setAuditEvents(fallbackAuditEvents)
-        setWorkflowView(null)
-        setSourceConnectionsByTarget(null)
-        setSourceMappingConfigs({})
+        applyFallbackPayload()
         setApiConnectionState(getApiFailureState(error))
         setApiConnectionError(getApiFailureMessage(error, 'Using demo data.'))
       })
@@ -242,6 +265,18 @@ export const useWorkflowData = () => {
     }
   }
 
+  const applyMapping = async (mappingId: string, mappingConfig: SourceMappingConfig) => {
+    try {
+      applyBootstrapPayload(await apiApplyMapping(mappingId, mappingConfig))
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Mapping could not be applied.'))
+      throw error
+    }
+  }
+
   const markIssueForDecision = async (issue: ReviewIssue) => {
     try {
       applyWorkflowPayload(await apiMarkIssueForDecision(issue.id))
@@ -329,6 +364,8 @@ export const useWorkflowData = () => {
     apiConnectionError,
     sourceConnectionsByTarget,
     sourceMappingConfigs,
+    sourceReadStatus,
+    refreshBootstrapData,
     createSource,
     deleteSource,
     registerSourceLocalFile,
@@ -336,6 +373,7 @@ export const useWorkflowData = () => {
     checkSourceAccess,
     saveSourceConnections,
     saveSourceMappings,
+    applyMapping,
     markIssueForDecision,
     setDecisionStatus,
     prepareOutput,
