@@ -20,7 +20,7 @@ type MappingStepProps = {
   mappingConfigs: Record<string, SourceMappingConfig>
   sourceDefinitions: SourceDefinition[]
   onSelectMapping: (mappingId: string) => void
-  onUpdateMapping: (mappingId: string, update: Partial<SourceMappingConfig>) => void
+  onSaveMappings: (mappingConfigs: Record<string, SourceMappingConfig>) => Promise<void>
   onApplyMapping: (mappingId: string, mappingConfig: SourceMappingConfig) => Promise<void>
 }
 
@@ -28,6 +28,22 @@ type MappingRow = {
   config: SourceMappingConfig
   source: SourceDefinition
   targetLabel: string
+}
+
+type MappingChangeSummary = {
+  mappingId: string
+  action: 'added' | 'updated' | 'cleared'
+  targetId: ConnectionTargetId
+  targetLabel: string
+  sourceLabel: string
+  isBomTarget: boolean
+  changedFields: string[]
+}
+
+type PendingMappingSave = {
+  action: 'save' | 'apply'
+  mappingId?: string
+  mappingConfig?: SourceMappingConfig
 }
 
 const roleOptions: SourceConnectionRole[] = ['Primary', 'Reference', 'Validation', 'Comparison']
@@ -54,7 +70,7 @@ export function MappingStep({
   mappingConfigs,
   sourceDefinitions,
   onSelectMapping,
-  onUpdateMapping,
+  onSaveMappings,
   onApplyMapping,
 }: MappingStepProps) {
   const [studioOpen, setStudioOpen] = useState(false)
@@ -66,6 +82,8 @@ export function MappingStep({
   const [mappingApplyPending, setMappingApplyPending] = useState(false)
   const [mappingApplyMessage, setMappingApplyMessage] = useState<string | null>(null)
   const [mappingApplyError, setMappingApplyError] = useState<string | null>(null)
+  const [draftMappingConfigs, setDraftMappingConfigs] = useState<Record<string, SourceMappingConfig>>(mappingConfigs)
+  const [pendingMappingSave, setPendingMappingSave] = useState<PendingMappingSave | null>(null)
   const isMountedRef = useRef(true)
   const sourceById = useMemo(
     () => new Map(sourceDefinitions.map((source) => [source.id, source])),
@@ -83,13 +101,13 @@ export function MappingStep({
 
           const mappingId = createMappingId(target.id, sourceId)
           return [{
-            config: mappingConfigs[mappingId] ?? createDefaultMappingConfig(target.id, sourceId),
+            config: draftMappingConfigs[mappingId] ?? createDefaultMappingConfig(target.id, sourceId),
             source,
             targetLabel: target.label,
           }]
         })
     },
-    [activeConnectionTarget, connectionsByTarget, mappingConfigs, sourceById],
+    [activeConnectionTarget, connectionsByTarget, draftMappingConfigs, sourceById],
   )
 
   const activeRow = mappingRows.find((row) => row.config.id === activeMappingId) ?? mappingRows[0]
@@ -104,6 +122,144 @@ export function MappingStep({
     row.some((cell) => cell.toLowerCase().includes(filterText.toLowerCase())),
   )
   const canApplyMapping = Boolean(activeRow && activeColumnMappings.length > 0)
+  const mappingChangeSummary = useMemo<MappingChangeSummary[]>(
+    () => {
+      const mappingIds = new Set([...Object.keys(mappingConfigs), ...Object.keys(draftMappingConfigs)])
+
+      return [...mappingIds].flatMap((mappingId) => {
+        const savedConfig = mappingConfigs[mappingId]
+        const draftConfig = draftMappingConfigs[mappingId]
+        if (JSON.stringify(savedConfig ?? null) === JSON.stringify(draftConfig ?? null)) return []
+        if (!draftConfig) return []
+
+        const [targetId, sourceId] = mappingId.split(':') as [ConnectionTargetId, string]
+        const target = connectionTargets.find((candidate) => candidate.id === targetId)
+        const source = sourceById.get(sourceId)
+        const changedFields = [
+          'role',
+          'status',
+          'sheetName',
+          'keyColumn',
+          'partNumberColumn',
+          'quantityColumn',
+          'revisionColumn',
+          'columnMappings',
+        ].filter((fieldName) =>
+          JSON.stringify(savedConfig?.[fieldName as keyof SourceMappingConfig] ?? null) !==
+          JSON.stringify(draftConfig[fieldName as keyof SourceMappingConfig] ?? null),
+        )
+
+        return [{
+          mappingId,
+          action: !savedConfig
+            ? 'added' as const
+            : draftConfig.columnMappings.length === 0 && (savedConfig.columnMappings?.length ?? 0) > 0
+              ? 'cleared' as const
+              : 'updated' as const,
+          targetId,
+          targetLabel: target?.label ?? targetId,
+          sourceLabel: source?.sourceFile?.name ?? source?.name ?? sourceId,
+          isBomTarget: targetId.startsWith('bom-'),
+          changedFields,
+        }]
+      })
+    },
+    [draftMappingConfigs, mappingConfigs, sourceById],
+  )
+  const hasUnsavedMappingChanges = mappingChangeSummary.length > 0
+  const bomMappingChanges = mappingChangeSummary.filter((change) => change.isBomTarget)
+
+  useEffect(() => {
+    setDraftMappingConfigs(mappingConfigs)
+    setPendingMappingSave(null)
+    setMappingApplyError(null)
+  }, [mappingConfigs])
+
+  const updateDraftMappingConfig = (mappingId: string, update: Partial<SourceMappingConfig>) => {
+    const [targetId, sourceId] = mappingId.split(':') as [ConnectionTargetId, string]
+
+    setDraftMappingConfigs((current) => ({
+      ...current,
+      [mappingId]: {
+        ...(current[mappingId] ?? createDefaultMappingConfig(targetId, sourceId)),
+        ...update,
+        id: mappingId,
+        targetId,
+        sourceId,
+      },
+    }))
+    setMappingApplyMessage(null)
+    setMappingApplyError(null)
+  }
+
+  const requestMappingUpdate = (update: Partial<SourceMappingConfig>) => {
+    if (!activeRow) return
+    updateDraftMappingConfig(activeRow.config.id, update)
+  }
+
+  const cancelMappingChanges = () => {
+    setDraftMappingConfigs(mappingConfigs)
+    setPendingMappingSave(null)
+    setMappingApplyMessage(null)
+    setMappingApplyError(null)
+  }
+
+  const requestMappingSave = (action: PendingMappingSave['action']) => {
+    if (action === 'apply') {
+      if (!activeRow || !canApplyMapping) return
+      setPendingMappingSave({
+        action,
+        mappingId: activeRow.config.id,
+        mappingConfig: activeRow.config,
+      })
+      return
+    }
+
+    setPendingMappingSave({ action })
+  }
+
+  const saveDraftMappings = async () => {
+    await onSaveMappings(draftMappingConfigs)
+  }
+
+  const confirmPendingMappingSave = async () => {
+    if (!pendingMappingSave) return
+
+    setMappingApplyPending(true)
+    setMappingApplyMessage(null)
+    setMappingApplyError(null)
+
+    try {
+      if (hasUnsavedMappingChanges) await saveDraftMappings()
+
+      if (pendingMappingSave.action === 'apply' && pendingMappingSave.mappingId && pendingMappingSave.mappingConfig) {
+        await onApplyMapping(pendingMappingSave.mappingId, pendingMappingSave.mappingConfig)
+        if (!isMountedRef.current) return
+        setMappingApplyMessage(
+          pendingMappingSave.mappingConfig.targetId === 'dashboard'
+            ? 'Dashboard was rebuilt from selected columns.'
+            : 'Mapping was saved as ready for this workflow target.',
+        )
+      } else if (isMountedRef.current) {
+        setMappingApplyMessage('Mapping changes were saved.')
+      }
+
+      if (isMountedRef.current) setPendingMappingSave(null)
+    } catch (error: unknown) {
+      if (!isMountedRef.current) return
+      setMappingApplyError(error instanceof Error ? error.message : 'Mapping changes could not be saved.')
+    } finally {
+      if (isMountedRef.current) setMappingApplyPending(false)
+    }
+  }
+
+  const pendingSaveBomImpact = pendingMappingSave?.action === 'apply'
+    ? Boolean(pendingMappingSave.mappingConfig?.targetId.startsWith('bom-') || bomMappingChanges.length)
+    : bomMappingChanges.length > 0
+
+  const pendingSaveChangeCount = pendingMappingSave?.action === 'apply' && !hasUnsavedMappingChanges
+    ? 1
+    : mappingChangeSummary.length
 
   useEffect(() => {
     isMountedRef.current = true
@@ -154,13 +310,13 @@ export function MappingStep({
       ? activeColumnMappings.filter((mapping) => !(mapping.sourceColumn === sourceColumn && mapping.sheetName === selectedSheetName))
       : [...activeColumnMappings, createColumnMapping(selectedSheetName, sourceColumn)]
 
-    onUpdateMapping(activeRow.config.id, { columnMappings: nextMappings })
+    requestMappingUpdate({ columnMappings: nextMappings })
   }
 
   const updateColumnMapping = (mappingId: string, update: Partial<SourceColumnMapping>) => {
     if (!activeRow) return
 
-    onUpdateMapping(activeRow.config.id, {
+    requestMappingUpdate({
       columnMappings: activeColumnMappings.map((mapping) =>
         mapping.id === mappingId ? { ...mapping, ...update } : mapping,
       ),
@@ -170,7 +326,7 @@ export function MappingStep({
   const removeColumnMapping = (mappingId: string) => {
     if (!activeRow) return
 
-    onUpdateMapping(activeRow.config.id, {
+    requestMappingUpdate({
       columnMappings: activeColumnMappings.filter((mapping) => mapping.id !== mappingId),
     })
   }
@@ -178,7 +334,7 @@ export function MappingStep({
   const deleteActiveMappingConfig = () => {
     if (!activeRow) return
 
-    onUpdateMapping(activeRow.config.id, {
+    requestMappingUpdate({
       sheetName: '',
       keyColumn: '',
       partNumberColumn: '',
@@ -187,29 +343,6 @@ export function MappingStep({
       status: 'Needs mapping',
       columnMappings: [],
     })
-  }
-
-  const applyActiveMapping = async () => {
-    if (!activeRow || !canApplyMapping) return
-
-    setMappingApplyPending(true)
-    setMappingApplyMessage(null)
-    setMappingApplyError(null)
-
-    try {
-      await onApplyMapping(activeRow.config.id, activeRow.config)
-      if (!isMountedRef.current) return
-      setMappingApplyMessage(
-        activeRow.config.targetId === 'dashboard'
-          ? 'Dashboard was rebuilt from selected columns.'
-          : 'Mapping was saved as ready for this workflow target.',
-      )
-    } catch (error: unknown) {
-      if (!isMountedRef.current) return
-      setMappingApplyError(error instanceof Error ? error.message : 'Mapping could not be applied.')
-    } finally {
-      if (isMountedRef.current) setMappingApplyPending(false)
-    }
   }
 
   return (
@@ -221,6 +354,27 @@ export function MappingStep({
               <p className="section-label">Mapping</p>
               <h3>Source mapping</h3>
               <p>Configure active connections for {activeConnectionTarget.label} before validation.</p>
+            </div>
+            <div className="change-review-bar">
+              <span className={hasUnsavedMappingChanges ? 'change-review-status change-review-status-dirty' : 'change-review-status'}>
+                {hasUnsavedMappingChanges ? `${mappingChangeSummary.length} unsaved changes` : 'No unsaved changes'}
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={cancelMappingChanges}
+                disabled={!hasUnsavedMappingChanges || mappingApplyPending}
+              >
+                Cancel changes
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => requestMappingSave('save')}
+                disabled={!hasUnsavedMappingChanges || mappingApplyPending}
+              >
+                Save changes
+              </button>
             </div>
           </div>
 
@@ -286,7 +440,7 @@ export function MappingStep({
                 <span>Role</span>
                 <select
                   value={activeRow.config.role}
-                  onChange={(event) => onUpdateMapping(activeRow.config.id, { role: event.target.value as SourceConnectionRole })}
+                  onChange={(event) => requestMappingUpdate({ role: event.target.value as SourceConnectionRole })}
                 >
                   {roleOptions.map((role) => (
                     <option key={role} value={role}>{role}</option>
@@ -298,7 +452,7 @@ export function MappingStep({
                 <span>Status</span>
                 <select
                   value={activeRow.config.status}
-                  onChange={(event) => onUpdateMapping(activeRow.config.id, { status: event.target.value as SourceMappingStatus })}
+                  onChange={(event) => requestMappingUpdate({ status: event.target.value as SourceMappingStatus })}
                 >
                   {statusOptions.map((status) => (
                     <option key={status} value={status}>{status}</option>
@@ -348,13 +502,18 @@ export function MappingStep({
                     <h3>Workbook preview</h3>
                   </div>
                   <div className="mapping-studio-toolbar" aria-label="Mapping Studio toolbar">
-                    <button type="button" onClick={() => onUpdateMapping(activeRow.config.id, { status: 'Ready' })}>Save mapping</button>
+                    <button type="button" onClick={() => requestMappingUpdate({ status: 'Ready' })}>Set Ready</button>
+                    <button
+                      type="button"
+                      onClick={() => requestMappingSave('save')}
+                      disabled={!hasUnsavedMappingChanges || mappingApplyPending}
+                    >
+                      Save changes
+                    </button>
                     <button
                       type="button"
                       className="mapping-studio-primary-action"
-                      onClick={() => {
-                        void applyActiveMapping()
-                      }}
+                      onClick={() => requestMappingSave('apply')}
                       disabled={!canApplyMapping || mappingApplyPending}
                     >
                       {mappingApplyPending ? 'Applying...' : 'Apply mapping'}
@@ -494,9 +653,78 @@ export function MappingStep({
               <span>Read-only preview</span>
               <span>{selectedSheetName || 'No sheet selected'}</span>
               <span>{visiblePreviewRows.length} rows shown</span>
+              {hasUnsavedMappingChanges ? <span>{mappingChangeSummary.length} unsaved changes</span> : null}
               {sourcePreview ? <span>Header row {sourcePreview.headerRow}</span> : null}
               {mappingApplyMessage ? <span>{mappingApplyMessage}</span> : null}
               {mappingApplyError ? <span className="mapping-studio-error">{mappingApplyError}</span> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingMappingSave ? (
+        <div className="impact-modal-overlay" role="dialog" aria-modal="true" aria-label="Mapping impact review">
+          <div className="impact-modal">
+            <div className="impact-modal-header">
+              <p className="section-label">Impact review</p>
+              <h3>{pendingMappingSave.action === 'apply' ? 'Confirm save and apply' : 'Confirm mapping changes'}</h3>
+              <p>These mapping changes will be saved as one update after confirmation.</p>
+            </div>
+
+            <dl className="impact-summary-list">
+              <div>
+                <dt>Action</dt>
+                <dd>{pendingMappingSave.action === 'apply' ? 'Save current mapping setup and apply active mapping' : 'Save mapping setup'}</dd>
+              </div>
+              <div>
+                <dt>Changes</dt>
+                <dd>{pendingSaveChangeCount}</dd>
+              </div>
+              <div>
+                <dt>Changed mappings</dt>
+                <dd>{mappingChangeSummary.length ? mappingChangeSummary.length : 'No draft changes; active mapping will be applied.'}</dd>
+              </div>
+              <div>
+                <dt>BOM impact</dt>
+                <dd>{pendingSaveBomImpact ? 'Yes, this can affect BOM validation and comparison.' : 'No direct BOM target impact.'}</dd>
+              </div>
+              <div>
+                <dt>Analysis impact</dt>
+                <dd>
+                  {pendingMappingSave.action === 'apply'
+                    ? 'The workflow will treat this mapping as the confirmed reading setup for this source.'
+                    : 'Validation and downstream analysis will use the confirmed mapping values after save.'}
+                </dd>
+              </div>
+            </dl>
+
+            {mappingChangeSummary.length ? (
+              <div className="impact-change-list" aria-label="Mapping changes">
+                {mappingChangeSummary.map((change) => (
+                  <div key={change.mappingId} className="impact-change-row">
+                    <strong>{change.action}</strong>
+                    <span>{change.targetLabel}</span>
+                    <span>{change.sourceLabel}</span>
+                    <small>{change.changedFields.join(', ') || 'Mapping settings'}</small>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {mappingApplyError ? <p className="impact-error">{mappingApplyError}</p> : null}
+
+            <div className="impact-modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setPendingMappingSave(null)} disabled={mappingApplyPending}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => { void confirmPendingMappingSave() }}
+                disabled={mappingApplyPending}
+              >
+                {mappingApplyPending ? 'Saving...' : 'Confirm and save'}
+              </button>
             </div>
           </div>
         </div>

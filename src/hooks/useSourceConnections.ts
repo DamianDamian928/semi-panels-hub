@@ -142,11 +142,17 @@ export const useSourceConnections = ({
     })
   }
 
+  const saveConnectionsByTarget = async (next: SourceConnectionsByTarget) => {
+    setConnectionsByTarget(next)
+    await saveSourceConnections(next)
+  }
+
   return {
     activeConnectionTargetId,
     setActiveConnectionTargetId,
     connectionsByTarget,
     connectSourceToTarget,
     disconnectSourceFromTarget,
+    saveConnectionsByTarget,
   }
 }

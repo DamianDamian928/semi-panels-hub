@@ -322,8 +322,7 @@ export function ReviewEditor({
     activeConnectionTargetId,
     setActiveConnectionTargetId,
     connectionsByTarget,
-    connectSourceToTarget,
-    disconnectSourceFromTarget,
+    saveConnectionsByTarget,
   } = useSourceConnections({
     sourceDefinitions,
     sourceConnectionsByTarget,
@@ -333,7 +332,7 @@ export function ReviewEditor({
     activeMappingId,
     setActiveMappingId,
     mappingConfigs,
-    updateMappingConfig,
+    saveMappingConfigs,
   } = useSourceMappings({
     activeConnectionTargetId,
     connectionsByTarget,
@@ -698,10 +697,10 @@ export function ReviewEditor({
         <ConnectionsStep
           activeConnectionTargetId={activeConnectionTargetId}
           connectionsByTarget={connectionsByTarget}
+          mappingConfigs={mappingConfigs}
           sourceDefinitions={sourceDefinitions}
           onSelectConnectionTarget={setActiveConnectionTargetId}
-          onConnectSourceToTarget={connectSourceToTarget}
-          onDisconnectSourceFromTarget={disconnectSourceFromTarget}
+          onSaveConnections={saveConnectionsByTarget}
         />
       )
     }
@@ -714,7 +713,7 @@ export function ReviewEditor({
           mappingConfigs={mappingConfigs}
           sourceDefinitions={sourceDefinitions}
           onSelectMapping={setActiveMappingId}
-          onUpdateMapping={updateMappingConfig}
+          onSaveMappings={saveMappingConfigs}
           onApplyMapping={applyMapping}
         />
       )

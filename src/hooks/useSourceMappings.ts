@@ -45,6 +45,11 @@ export const useSourceMappings = ({
     })
   }
 
+  const saveMappingConfigs = async (next: Record<string, SourceMappingConfig>) => {
+    setMappingConfigs(next)
+    await saveSourceMappings(next)
+  }
+
   useEffect(() => {
     if (currentProcessStep !== 'Mapping') return
 
@@ -53,31 +58,10 @@ export const useSourceMappings = ({
       .filter((sourceId) => sourceIds.has(sourceId))
       .map((sourceId) => createMappingId(activeConnectionTargetId, sourceId))
     const activeAvailableMappingIdSet = new Set(activeAvailableMappingIds)
-    const allAvailableMappingIdSet = new Set(
-      Object.entries(connectionsByTarget).flatMap(([targetId, connectedSourceIds]) =>
-        connectedSourceIds
-          .filter((sourceId) => sourceIds.has(sourceId))
-          .map((sourceId) => createMappingId(targetId as ConnectionTargetId, sourceId)),
-      ),
-    )
 
     if (!activeAvailableMappingIdSet.has(activeMappingId)) {
       setActiveMappingId(activeAvailableMappingIds[0] ?? '')
     }
-
-    setMappingConfigs((current) => {
-      let changed = false
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([mappingId]) => {
-          const keep = allAvailableMappingIdSet.has(mappingId)
-          if (!keep) changed = true
-          return keep
-        }),
-      ) as Record<string, SourceMappingConfig>
-
-      if (changed) void saveSourceMappings(next).catch(() => undefined)
-      return changed ? next : current
-    })
   }, [activeConnectionTargetId, activeMappingId, connectionsByTarget, currentProcessStep, sourceDefinitions])
 
   return {
@@ -85,5 +69,6 @@ export const useSourceMappings = ({
     setActiveMappingId,
     mappingConfigs,
     updateMappingConfig,
+    saveMappingConfigs,
   }
 }
