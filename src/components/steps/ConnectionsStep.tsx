@@ -114,6 +114,15 @@ export function ConnectionsStep({
   const hasUnsavedConnectionChanges = connectionChanges.length > 0
   const bomConnectionChanges = connectionChanges.filter((change) => change.isBomTarget)
   const removedMappingsKept = connectionChanges.filter((change) => change.action === 'removed' && change.mappingColumns > 0)
+  const connectedSourceIds = new Set(
+    connectionTargets.flatMap((target) =>
+      (draftConnectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)),
+    ),
+  )
+  const totalConnectionCount = connectionTargets.reduce(
+    (count, target) => count + (draftConnectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)).length,
+    0,
+  )
 
   useEffect(() => {
     setDraftConnectionsByTarget(connectionsByTarget)
@@ -228,19 +237,18 @@ export function ConnectionsStep({
   return (
     <section className="workspace-main-grid connections-workspace-grid">
       <section className="workspace-main card connections-stage">
-        <div className="connections-header">
+        <div className="sources-registry-header connections-header">
           <div>
             <p className="section-label">Connections</p>
             <h3>Source connection map</h3>
-            <p>Connect registered sources to Dashboard, BOM levels, Documentation and Costing. One source can feed many targets.</p>
           </div>
-          <div className="change-review-bar">
+          <div className="sources-registry-actions connections-registry-actions" aria-label="Connection actions">
             <span className={hasUnsavedConnectionChanges ? 'change-review-status change-review-status-dirty' : 'change-review-status'}>
               {hasUnsavedConnectionChanges ? `${connectionChanges.length} unsaved changes` : 'No unsaved changes'}
             </span>
             <button
               type="button"
-              className="secondary-button"
+              className="secondary-button source-action-button"
               onClick={cancelConnectionChanges}
               disabled={!hasUnsavedConnectionChanges || connectionSavePending}
             >
@@ -248,7 +256,7 @@ export function ConnectionsStep({
             </button>
             <button
               type="button"
-              className="primary-button"
+              className="secondary-button source-action-button"
               onClick={() => setImpactReviewOpen(true)}
               disabled={!hasUnsavedConnectionChanges || connectionSavePending}
             >
@@ -257,11 +265,29 @@ export function ConnectionsStep({
           </div>
         </div>
 
+        <div className="source-summary-grid connections-summary-grid" aria-label="Connection summary">
+          <article className="source-summary-card">
+            <span>Workflow targets</span>
+            <strong>{connectionTargets.length}</strong>
+          </article>
+          <article className="source-summary-card">
+            <span>Connected sources</span>
+            <strong>{connectedSourceIds.size}</strong>
+          </article>
+          <article className="source-summary-card">
+            <span>Available sources</span>
+            <strong>{sourceDefinitions.length}</strong>
+          </article>
+          <article className="source-summary-card">
+            <span>Total links</span>
+            <strong>{totalConnectionCount}</strong>
+          </article>
+        </div>
+
         <div className="connection-map" aria-label="Source connection map">
           <div className="connection-map-column">
             <div className="connection-map-column-head">
               <span>Workflow targets</span>
-              <strong>{activeTarget.label}</strong>
             </div>
             <div className="connection-target-list">
               {connectionTargets.map((target) => {
@@ -308,7 +334,6 @@ export function ConnectionsStep({
           <div className="connection-map-column">
             <div className="connection-map-column-head">
               <span>Available sources</span>
-              <strong>{sourceDefinitions.length}</strong>
             </div>
             <div className="connection-source-list">
               {sourceDefinitions.map((source) => {

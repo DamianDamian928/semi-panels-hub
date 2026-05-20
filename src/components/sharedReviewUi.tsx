@@ -1,6 +1,5 @@
 import type { ReactNode, SVGProps } from 'react'
 import type {
-  BomStage,
   ConnectionCard,
   ConnectionTarget,
   ConnectionTreeSection,
@@ -24,11 +23,7 @@ export const statusClassName: Record<ReviewStatus, string> = {
   Completed: 'status status-completed',
 }
 
-export const mainStages: MainStage[] = ['BOM', 'Documentation', 'Costing']
-export const bomStages: BomStage[] = ['MATVAR', 'L1', 'L2', 'L3']
-
 export const sidebarSteps: SidebarStepDefinition[] = [
-  { step: 'Main', label: 'Main', icon: 'main' },
   { step: 'Sources', label: 'Sources', icon: 'sources' },
   { step: 'Connections', label: 'Connections', icon: 'connections' },
   { step: 'Mapping', label: 'Mapping', icon: 'mapping' },
@@ -123,14 +118,6 @@ export function SidebarGlyph({ name, className, ...props }: { name: SidebarIconN
   }
 
   const glyphs: Record<SidebarIconName, ReactNode> = {
-    main: (
-      <>
-        <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" />
-        <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" />
-        <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" />
-        <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" />
-      </>
-    ),
     sources: (
       <>
         <path d="M5 6.5c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3Z" />
@@ -351,10 +338,11 @@ export const formatFileModifiedAt = (modifiedAt: string) =>
 
 export const connectionsCustomStyles = `
   .connections-workspace-grid { grid-template-columns: minmax(0, 1fr); }
-  .connections-stage { padding: 28px; overflow: hidden; }
-  .connections-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+  .connections-stage { display: grid; gap: 20px; padding: 28px; overflow: hidden; }
+  .connections-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 0; }
   .connections-header h3 { margin: 0 0 8px; }
   .connections-header p:last-child { max-width: 760px; margin: 0; color: #9fb4cf; line-height: 1.55; }
+  .connections-registry-actions { align-items: flex-start; }
   .change-review-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
   .change-review-status { min-height: 36px; display: inline-flex; align-items: center; padding: 0 12px; border: 1px solid rgba(98,132,173,0.16); border-radius: 8px; background: rgba(8, 17, 29, 0.46); color: #9fb4cf; font-size: 12px; font-weight: 800; }
   .change-review-status-dirty { border-color: rgba(255, 201, 112, 0.32); background: rgba(68, 48, 18, 0.34); color: #ffd68a; }

@@ -15,11 +15,11 @@ import { connectionTargets, SourceTypeGlyph } from '../sharedReviewUi'
 
 type MappingStepProps = {
   activeMappingId: string
-  activeConnectionTargetId: ConnectionTargetId
   connectionsByTarget: Record<ConnectionTargetId, string[]>
   mappingConfigs: Record<string, SourceMappingConfig>
   sourceDefinitions: SourceDefinition[]
   onSelectMapping: (mappingId: string) => void
+  onSelectConnectionTarget: (targetId: ConnectionTargetId) => void
   onSaveMappings: (mappingConfigs: Record<string, SourceMappingConfig>) => Promise<void>
   onApplyMapping: (mappingId: string, mappingConfig: SourceMappingConfig) => Promise<void>
 }
@@ -65,11 +65,11 @@ const targetFieldOptions = [
 
 export function MappingStep({
   activeMappingId,
-  activeConnectionTargetId,
   connectionsByTarget,
   mappingConfigs,
   sourceDefinitions,
   onSelectMapping,
+  onSelectConnectionTarget,
   onSaveMappings,
   onApplyMapping,
 }: MappingStepProps) {
@@ -90,12 +90,10 @@ export function MappingStep({
     [sourceDefinitions],
   )
 
-  const activeConnectionTarget = connectionTargets.find((target) => target.id === activeConnectionTargetId) ?? connectionTargets[0]
   const mappingRows = useMemo<MappingRow[]>(
     () => {
-      const target = activeConnectionTarget
-
-      return (connectionsByTarget[target.id] ?? []).flatMap((sourceId) => {
+      return connectionTargets.flatMap((target) =>
+        (connectionsByTarget[target.id] ?? []).flatMap((sourceId) => {
           const source = sourceById.get(sourceId)
           if (!source) return []
 
@@ -105,9 +103,10 @@ export function MappingStep({
             source,
             targetLabel: target.label,
           }]
-        })
+        }),
+      )
     },
-    [activeConnectionTarget, connectionsByTarget, draftMappingConfigs, sourceById],
+    [connectionsByTarget, draftMappingConfigs, sourceById],
   )
 
   const activeRow = mappingRows.find((row) => row.config.id === activeMappingId) ?? mappingRows[0]
@@ -168,6 +167,10 @@ export function MappingStep({
   )
   const hasUnsavedMappingChanges = mappingChangeSummary.length > 0
   const bomMappingChanges = mappingChangeSummary.filter((change) => change.isBomTarget)
+  const mappingReadyCount = mappingRows.filter((row) => row.config.status === 'Ready').length
+  const needsMappingCount = mappingRows.filter((row) => row.config.status === 'Needs mapping').length
+  const totalMappedColumnCount = mappingRows.reduce((count, row) => count + row.config.columnMappings.length, 0)
+  const activeMappingStatusClass = activeRow?.config.status.toLowerCase().replace(/\s+/g, '-') ?? 'needs-mapping'
 
   useEffect(() => {
     setDraftMappingConfigs(mappingConfigs)
@@ -347,21 +350,20 @@ export function MappingStep({
 
   return (
     <>
-      <section className="mapping-workspace-grid">
-        <section className="workspace-main card mapping-main">
-          <div className="mapping-header">
+      <section className="sources-registry-grid sources-registry-grid-with-detail mapping-registry-grid">
+        <section className="workspace-main card sources-registry-main mapping-registry-main">
+          <div className="sources-registry-header mapping-header">
             <div>
               <p className="section-label">Mapping</p>
               <h3>Source mapping</h3>
-              <p>Configure active connections for {activeConnectionTarget.label} before validation.</p>
             </div>
-            <div className="change-review-bar">
+            <div className="sources-registry-actions mapping-registry-actions" aria-label="Mapping actions">
               <span className={hasUnsavedMappingChanges ? 'change-review-status change-review-status-dirty' : 'change-review-status'}>
                 {hasUnsavedMappingChanges ? `${mappingChangeSummary.length} unsaved changes` : 'No unsaved changes'}
               </span>
               <button
                 type="button"
-                className="secondary-button"
+                className="secondary-button source-action-button"
                 onClick={cancelMappingChanges}
                 disabled={!hasUnsavedMappingChanges || mappingApplyPending}
               >
@@ -369,7 +371,7 @@ export function MappingStep({
               </button>
               <button
                 type="button"
-                className="primary-button"
+                className="secondary-button source-action-button"
                 onClick={() => requestMappingSave('save')}
                 disabled={!hasUnsavedMappingChanges || mappingApplyPending}
               >
@@ -378,10 +380,30 @@ export function MappingStep({
             </div>
           </div>
 
-          <div className="mapping-table-wrap">
-            <div className="mapping-table-head" aria-hidden="true">
+          <div className="source-summary-grid" aria-label="Mapping summary">
+            <article className="source-summary-card">
+              <span>Total connections</span>
+              <strong>{mappingRows.length}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Ready</span>
+              <strong>{mappingReadyCount}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Needs mapping</span>
+              <strong>{needsMappingCount}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Mapped columns</span>
+              <strong>{totalMappedColumnCount}</strong>
+            </article>
+          </div>
+
+          <div className="source-registry-list mapping-registry-list" aria-label="Source mappings">
+            <div className="source-registry-list-head mapping-registry-list-head" aria-hidden="true">
+              <span className="source-registry-icon-head" />
               <span>Workflow target</span>
-              <span>Sources</span>
+              <span>Source</span>
               <span>Mapped columns</span>
               <span>Status</span>
             </div>
@@ -392,76 +414,107 @@ export function MappingStep({
                 <button
                   key={row.config.id}
                   type="button"
-                  className={`mapping-row ${isActive ? 'mapping-row-active' : ''}`}
-                  onClick={() => onSelectMapping(row.config.id)}
+                  className={`source-registry-row mapping-registry-row ${isActive ? 'source-registry-row-active' : ''}`}
+                  onClick={() => {
+                    onSelectConnectionTarget(row.config.targetId)
+                    onSelectMapping(row.config.id)
+                  }}
                 >
-                  <span className="mapping-row-connection">
-                    <strong>{row.targetLabel}</strong>
-                  </span>
-                  <span className="mapping-row-source">
+                  <span className="source-registry-type" role="img" aria-label={row.source.type} title={row.source.type}>
                     <span className={`source-type-icon source-type-icon-compact source-type-icon-${row.source.type.toLowerCase().replace(/\s+/g, '-')}`}>
                       <SourceTypeGlyph type={row.source.type} className="source-type-glyph" />
                     </span>
-                    <strong>{row.source.sourceFile?.name ?? row.source.name}</strong>
                   </span>
-                  <span>{row.config.columnMappings.length}</span>
-                  <span>{row.config.status}</span>
+                  <span className="source-registry-name mapping-target-name">
+                    <strong>{row.targetLabel}</strong>
+                  </span>
+                  <span className="source-application-type" title={row.source.sourceFile?.name ?? row.source.name}>
+                    {row.source.sourceFile?.name ?? row.source.name}
+                  </span>
+                  <span className="source-file-size">
+                    {row.config.columnMappings.length}
+                  </span>
+                  <span className={`source-status source-status-${row.config.status.toLowerCase().replace(/\s+/g, '-')}`}>
+                    <span className="source-status-dot" />
+                    {row.config.status}
+                  </span>
                 </button>
               )
             })}
 
             {mappingRows.length === 0 ? (
-              <div className="mapping-empty-state">
+              <div className="source-registry-empty">
                 <strong>No active connections to map</strong>
-                <p>Create connections for {activeConnectionTarget.label}, then return here to configure column mapping.</p>
+                <p>Create connections in the Connections step, then return here to configure column mapping.</p>
               </div>
             ) : null}
           </div>
         </section>
 
-        <aside className="workspace-side-panel card mapping-detail-panel" aria-label="Mapping details">
+        <aside className="workspace-side-panel card source-detail-panel mapping-detail-panel" aria-label="Mapping details">
           {activeRow ? (
             <>
-              <div className="sidebar-header">
-                <p className="section-label">Mapping details</p>
-                <h2>{activeRow.targetLabel}</h2>
-                <p>{activeRow.source.sourceFile?.name ?? activeRow.source.name}</p>
+              <div className="source-connector-header">
+                <div>
+                  <p className="section-label">Mapping details</p>
+                  <h2>{activeRow.targetLabel}</h2>
+                  <p>{activeRow.source.sourceFile?.name ?? activeRow.source.name}</p>
+                </div>
               </div>
 
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setStudioOpen(true)}
-              >
-                Open Mapping Studio
-              </button>
+              <p className="source-detail-section-title">Details</p>
+              <dl className="source-property-list">
+                <div className="source-property-row">
+                  <dt>Status</dt>
+                  <dd>
+                    <span className={`source-status source-status-${activeMappingStatusClass}`}>
+                      <span className="source-status-dot" />
+                      {activeRow.config.status}
+                    </span>
+                  </dd>
+                </div>
+                <div className="source-property-row">
+                  <dt>Target</dt>
+                  <dd>{activeRow.targetLabel}</dd>
+                </div>
+                <div className="source-property-row">
+                  <dt>Source</dt>
+                  <dd>{activeRow.source.sourceFile?.name ?? activeRow.source.name}</dd>
+                </div>
+                <div className="source-property-row">
+                  <dt>Columns</dt>
+                  <dd>{activeColumnMappings.length}</dd>
+                </div>
+              </dl>
 
-              <label className="source-form-field">
-                <span>Role</span>
-                <select
-                  value={activeRow.config.role}
-                  onChange={(event) => requestMappingUpdate({ role: event.target.value as SourceConnectionRole })}
-                >
-                  {roleOptions.map((role) => (
-                    <option key={role} value={role}>{role}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="mapping-detail-controls">
+                <label className="source-form-field">
+                  <span>Role</span>
+                  <select
+                    value={activeRow.config.role}
+                    onChange={(event) => requestMappingUpdate({ role: event.target.value as SourceConnectionRole })}
+                  >
+                    {roleOptions.map((role) => (
+                      <option key={role} value={role}>{role}</option>
+                    ))}
+                  </select>
+                </label>
 
-              <label className="source-form-field">
-                <span>Status</span>
-                <select
-                  value={activeRow.config.status}
-                  onChange={(event) => requestMappingUpdate({ status: event.target.value as SourceMappingStatus })}
-                >
-                  {statusOptions.map((status) => (
-                    <option key={status} value={status}>{status}</option>
-                  ))}
-                </select>
-              </label>
+                <label className="source-form-field">
+                  <span>Status</span>
+                  <select
+                    value={activeRow.config.status}
+                    onChange={(event) => requestMappingUpdate({ status: event.target.value as SourceMappingStatus })}
+                  >
+                    {statusOptions.map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
-              <div className="mapping-selected-summary">
-                <strong>Selected columns</strong>
+              <p className="source-detail-section-title">Selected columns</p>
+              <div className="mapping-selected-summary mapping-detail-selected-summary">
                 {activeColumnMappings.length ? (
                   activeColumnMappings.map((mapping) => (
                     <span key={mapping.id}>{activeSourceLabel} / {mapping.sheetName} / {mapping.sourceColumn}</span>
@@ -470,12 +523,24 @@ export function MappingStep({
                   <p>No columns selected yet.</p>
                 )}
               </div>
+
+              <div className="source-detail-actions mapping-detail-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setStudioOpen(true)}
+                >
+                  Open Mapping Studio
+                </button>
+              </div>
             </>
           ) : (
-            <div className="sidebar-header">
-              <p className="section-label">Mapping details</p>
-              <h2>No mapping selected</h2>
-              <p>Connections created in the previous step will appear here.</p>
+            <div className="source-connector-header">
+              <div>
+                <p className="section-label">Mapping details</p>
+                <h2>No mapping selected</h2>
+                <p>Connections created in the previous step will appear here.</p>
+              </div>
             </div>
           )}
         </aside>

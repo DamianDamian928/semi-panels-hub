@@ -90,18 +90,40 @@ foreach ($service in $services) {
     -WindowStyle Hidden | Out-Null
 }
 
-$allReady = $true
+$serviceResults = @()
 
 foreach ($service in $services) {
-  if (-not (Wait-HttpReady -Name $service.Name -Url $service.HealthUrl)) {
-    $allReady = $false
+  $isReady = Wait-HttpReady -Name $service.Name -Url $service.HealthUrl
+  $serviceResults += [pscustomobject]@{
+    Name = $service.Name
+    Port = $service.Port
+    Ready = $isReady
+    HealthUrl = $service.HealthUrl
   }
 }
+
+Write-Host ""
+Write-Host "Local service summary:"
+
+foreach ($result in $serviceResults) {
+  $status = if ($result.Ready) { 'ready' } else { 'offline' }
+  $marker = if ($result.Ready) { '[ready]' } else { '[offline]' }
+  Write-Host "$marker $($result.Name) ($($result.Port)): $status"
+}
+
+$allReady = -not ($serviceResults | Where-Object { -not $_.Ready })
+$helperReady = ($serviceResults | Where-Object { $_.Name -eq 'Local file helper' } | Select-Object -First 1).Ready
+
+Write-Host ""
 
 if ($allReady) {
   Write-Host "All local services are ready."
 } else {
   Write-Warning "At least one local service is not ready. Check the ports above before using the app."
+}
+
+if (-not $helperReady) {
+  Write-Warning "Open location and choose local file will not work until Local file helper is running on port 8787."
 }
 
 if (-not $NoBrowser) {

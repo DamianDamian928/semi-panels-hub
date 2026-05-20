@@ -350,6 +350,78 @@ h3 {
   background: rgba(38, 29, 19, 0.38);
 }
 
+.local-helper-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid rgba(126, 172, 220, 0.14);
+  border-radius: 8px;
+  background: rgba(10, 19, 31, 0.46);
+  color: var(--muted);
+  font-family: 'Cascadia Mono', Consolas, 'Roboto Mono', 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.local-helper-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #94a9c5;
+}
+
+.local-helper-status span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.local-helper-status strong {
+  color: #d8e1ec;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.local-helper-status-ready {
+  border-color: rgba(104, 211, 145, 0.28);
+}
+
+.local-helper-status-ready span {
+  color: #68d391;
+}
+
+.local-helper-status-ready .local-helper-status-dot {
+  background: #68d391;
+}
+
+.local-helper-status-checking {
+  border-color: rgba(100, 216, 255, 0.28);
+}
+
+.local-helper-status-checking span {
+  color: #64d8ff;
+}
+
+.local-helper-status-checking .local-helper-status-dot {
+  background: #64d8ff;
+}
+
+.local-helper-status-offline {
+  border-color: rgba(255, 177, 92, 0.2);
+  background: rgba(38, 29, 19, 0.38);
+}
+
+.local-helper-status-offline span {
+  color: #ffb15c;
+}
+
+.local-helper-status-offline .local-helper-status-dot {
+  background: #ffb15c;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: #8692a2;
@@ -1753,6 +1825,31 @@ tbody tr:last-child td {
   margin-bottom: 18px;
 }
 
+.stage-purpose-collapsed-control {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+.stage-purpose-toggle {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(126, 145, 168, 0.24);
+  border-radius: 8px;
+  background: rgba(8, 16, 27, 0.46);
+  color: #d8e1ec;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.stage-purpose-toggle:hover {
+  border-color: rgba(126, 145, 168, 0.4);
+  background: rgba(18, 31, 47, 0.64);
+}
+
 .stage-purpose-summary {
   margin: 0 0 20px;
   max-width: 960px;
@@ -2650,6 +2747,7 @@ tbody tr:last-child td {
 
 .sources-registry-grid-with-detail {
   grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: stretch;
 }
 
 .sources-registry-main,
@@ -3045,7 +3143,8 @@ tbody tr:last-child td {
 }
 
 .source-registry-row .source-status-needs-location,
-.source-registry-row .source-status-needs-check {
+.source-registry-row .source-status-needs-check,
+.source-registry-row .source-status-needs-mapping {
   color: #c8ad62;
 }
 
@@ -3466,6 +3565,10 @@ tbody tr:last-child td {
   height: 5px;
 }
 
+.source-detail-panel .source-status-needs-mapping {
+  color: #c8ad62;
+}
+
 .source-detail-panel .source-location-path {
   color: #d8e1ec;
   font-weight: 400;
@@ -3497,6 +3600,70 @@ tbody tr:last-child td {
   color: #cf8d83;
   font-size: 12px;
   font-weight: 500;
+}
+
+.mapping-registry-main .mapping-header {
+  margin-bottom: 0 !important;
+}
+
+.mapping-registry-list-head,
+.mapping-registry-row {
+  grid-template-columns: 44px minmax(150px, 0.75fr) minmax(220px, 1fr) 124px 140px;
+}
+
+.mapping-target-name strong {
+  color: #d8e1ec;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mapping-registry-row .source-file-size {
+  color: #d8e1ec;
+}
+
+.source-detail-panel.mapping-detail-panel {
+  gap: 0 !important;
+  align-self: stretch;
+  min-height: auto;
+}
+
+.mapping-detail-controls {
+  display: grid;
+  gap: 14px;
+  padding-top: 18px;
+}
+
+.source-detail-panel .mapping-detail-controls .source-form-field span {
+  color: #8692a2;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.source-detail-panel .mapping-detail-controls .source-form-field select {
+  min-height: 42px;
+  border-color: rgba(126, 145, 168, 0.24);
+  border-radius: 8px;
+  background: rgba(5, 13, 24, 0.78);
+  color: #d8e1ec;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.source-detail-panel .mapping-detail-selected-summary {
+  gap: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.source-detail-panel .mapping-detail-selected-summary span,
+.source-detail-panel .mapping-detail-selected-summary p {
+  color: #9ca8b8;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .stage-tab,
@@ -4126,6 +4293,10 @@ tbody tr:last-child td {
   }
 
   .source-registry-row {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-registry-row {
     grid-template-columns: 1fr;
   }
 

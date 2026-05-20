@@ -9,3 +9,4 @@ export type LocalFileSelection = {
 
 export const localFileHelperEndpoint = 'http://127.0.0.1:8787/api/local-file-dialog'
 export const localFileOpenLocationEndpoint = 'http://127.0.0.1:8787/api/open-local-location'
+export const localFileHelperHealthEndpoint = 'http://127.0.0.1:8787/health'

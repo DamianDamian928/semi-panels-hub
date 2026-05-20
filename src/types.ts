@@ -1,12 +1,10 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
-export type BomStage = 'MATVAR' | 'L1' | 'L2' | 'L3'
-export type ProcessStep = 'Main' | 'Sources' | 'Connections' | 'Mapping' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
+export type ProcessStep = 'Sources' | 'Connections' | 'Mapping' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings' | 'settings-diagnostics' | 'settings-design-template' | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
 export type SidebarIconName =
-  | 'main'
   | 'sources'
   | 'connections'
   | 'mapping'

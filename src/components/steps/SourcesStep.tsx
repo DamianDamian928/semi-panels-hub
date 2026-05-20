@@ -126,12 +126,17 @@ export function SourcesStep({
         body: JSON.stringify({ path: selectedSourceFile.path }),
       })
 
-      if (!response.ok) throw new Error('Could not open this local location.')
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error(payload?.error ?? 'Could not open this local location.')
+      }
     } catch (error) {
       setSourceOpenLocationError(
         error instanceof Error
-          ? error.message
-          : 'Could not open this local location.',
+          ? error.message === 'Failed to fetch'
+            ? 'Local file helper is offline. Start npm run helper or npm run start:local, then try again.'
+            : error.message
+          : 'Local file helper is offline. Start npm run helper or npm run start:local, then try again.',
       )
     }
   }

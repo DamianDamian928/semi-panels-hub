@@ -9,14 +9,11 @@ import { useStorageStatus } from '../hooks/useStorageStatus'
 import type {
   AuditEvent,
   ApiConnectionState,
-  BomStage,
-  ConnectionTargetId,
   DashboardRow,
   DecisionFilter,
   DecisionRecord,
   DecisionState,
   DecisionStatus,
-  MainStage,
   OutputFilter,
   OutputItem,
   OutputStatus,
@@ -33,12 +30,11 @@ import type {
   ValidationState,
 } from '../types'
 import { ApiStatusBanner } from './ApiStatusBanner'
+import { LocalFileHelperStatus } from './LocalFileHelperStatus'
 import { StorageStatusPanel } from './StorageStatusPanel'
 import {
   connectionsCustomStyles,
-  bomStages,
   BrandGlyph,
-  mainStages,
   sidebarSteps,
   SidebarGlyph,
   statusClassName,
@@ -52,26 +48,12 @@ import { ReviewStep } from './steps/ReviewStep'
 import { SourcesStep } from './steps/SourcesStep'
 
 const activeStepByStatus: Record<DashboardRow['status'], ProcessStep> = {
-  Draft: 'Main',
+  Draft: 'Sources',
   'In progress': 'Review',
   Completed: 'Output',
 }
 
-const connectionTargetByMainStage: Record<MainStage, ConnectionTargetId> = {
-  BOM: 'bom-matvar',
-  Documentation: 'documentation',
-  Costing: 'costing',
-}
-
-const connectionTargetByBomStage: Record<BomStage, ConnectionTargetId> = {
-  MATVAR: 'bom-matvar',
-  L1: 'bom-l1',
-  L2: 'bom-l2',
-  L3: 'bom-l3',
-}
-
 const nextStepByProcess: Record<ProcessStep, { title: string; description: string }> = {
-  Main: { title: 'Sources', description: 'Review the registered sources before connecting them to stages.' },
   Sources: { title: 'Connections', description: 'Assign read-only sources to the review stages.' },
   Connections: { title: 'Mapping', description: 'Configure how each connected source should be read.' },
   Mapping: { title: 'Validation', description: 'Check source readiness before normalization.' },
@@ -81,38 +63,10 @@ const nextStepByProcess: Record<ProcessStep, { title: string; description: strin
   Review: { title: 'Decisions', description: 'Create auditable decision records for selected issues.' },
   Decisions: { title: 'Output', description: 'Prepare final artifacts from accepted decisions.' },
   Output: { title: 'AI Assistant', description: 'Use assistant context once the workflow data is stable.' },
-  'AI Assistant': { title: 'Main', description: 'Return to the main review context.' },
-}
-
-const stageDescriptions: Record<MainStage, { title: string; description: string; connectionTitle: string }> = {
-  BOM: {
-    title: 'BOM review scope',
-    description: 'Work through MATVAR, L1, L2 and L3 review areas.',
-    connectionTitle: 'BOM connections',
-  },
-  Documentation: {
-    title: 'Documentation review scope',
-    description: 'Review documentation sources and missing links.',
-    connectionTitle: 'Documentation connections',
-  },
-  Costing: {
-    title: 'Costing review scope',
-    description: 'Review costing inputs and output impact.',
-    connectionTitle: 'Costing connections',
-  },
+  'AI Assistant': { title: 'Sources', description: 'Return to the source registry.' },
 }
 
 const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
-  Main: {
-    eyebrow: 'Main',
-    title: 'Review starting point',
-    summary: 'This screen gives the current project context and lets the reviewer choose the next workflow area.',
-    goal: 'Give one clear entry point before working with sources, issues and decisions.',
-    function: 'Shows the active BOM, Documentation or Costing scope.',
-    yourRole: 'Decide where to continue in the review flow.',
-    example: 'If validation has warnings, go there before accepting decisions.',
-    output: 'A clear next step for the review.',
-  },
   Sources: {
     eyebrow: 'Sources',
     title: 'Read-only source registry',
@@ -286,8 +240,6 @@ export function ReviewEditor({
   savePreparedOutput,
   onBackToDashboard,
 }: ReviewEditorProps) {
-  const [activeMainStage, setActiveMainStage] = useState<MainStage>('BOM')
-  const [activeBomStage, setActiveBomStage] = useState<BomStage>('MATVAR')
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStep>(activeStepByStatus[selectedReview.status])
   const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0]?.id ?? '')
   const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
@@ -295,6 +247,7 @@ export function ReviewEditor({
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
   const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0]?.id ?? '')
   const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
+  const [stepInfoExpanded, setStepInfoExpanded] = useState(true)
 
   const currentProcessStep = activeProcessStep
   const {
@@ -358,12 +311,9 @@ export function ReviewEditor({
   } = useStorageStatus(currentProcessStep)
   const nextStep = nextStepByProcess[currentProcessStep]
   const purposeContent = stepPurposeContent[currentProcessStep]
-  const activeStageInfo = stageDescriptions[activeMainStage]
-  const currentScope = activeMainStage === 'BOM' ? `BOM / ${activeBomStage}` : activeMainStage
-  const isMainStep = currentProcessStep === 'Main'
 
   const renderSourceNamesStep = (
-    stepName: Exclude<ProcessStep, 'Main' | 'Connections'>,
+    stepName: Exclude<ProcessStep, 'Connections'>,
     title: string,
     description: string,
     statusLabel: string,
@@ -574,100 +524,7 @@ export function ReviewEditor({
     )
   }
 
-  const renderMainStep = () => (
-    <section className="workspace-main-grid">
-      <section className="workspace-main card">
-        <div className="stage-tabs" role="tablist" aria-label="Main project stages">
-          {mainStages.map((stage, index) => {
-            const isActive = activeMainStage === stage
-            return (
-              <button
-                key={stage}
-                type="button"
-                className={`stage-tab ${isActive ? 'stage-tab-active' : ''}`}
-                onClick={() => {
-                  setActiveMainStage(stage)
-                  setActiveConnectionTargetId(connectionTargetByMainStage[stage])
-                }}
-                aria-pressed={isActive}
-              >
-                <span className="stage-tab-index">[{index + 1}. {stage}]</span>
-                {isActive ? <span className="stage-tab-badge">Active</span> : null}
-              </button>
-            )
-          })}
-        </div>
-
-        {activeMainStage === 'BOM' ? (
-          <div className="substage-tabs" role="tablist" aria-label="BOM sections">
-            {bomStages.map((stage) => {
-              const isActive = activeBomStage === stage
-              return (
-                <button
-                  key={stage}
-                  type="button"
-                  className={`substage-tab ${isActive ? 'substage-tab-active' : ''}`}
-                  onClick={() => {
-                    setActiveBomStage(stage)
-                    setActiveConnectionTargetId(connectionTargetByBomStage[stage])
-                  }}
-                  aria-pressed={isActive}
-                >
-                  [{stage}]
-                  {isActive ? <span className="substage-tab-badge">Active</span> : null}
-                </button>
-              )
-            })}
-          </div>
-        ) : null}
-
-        <div className="workspace-card">
-          <div className="workspace-copy">
-            <p className="section-label">{currentScope}</p>
-            <h3>{activeStageInfo.title}</h3>
-            <p>{activeStageInfo.description}</p>
-          </div>
-
-          <div className="workspace-placeholder">
-            <div className="placeholder-box">
-              <span className="placeholder-title">Main edit area</span>
-              <span className="placeholder-text">This right-side heart of the screen will grow from this skeleton.</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <aside className="workspace-side-panel card" aria-label="Context panel">
-        <div className="sidebar-header">
-          <p className="section-label">Connection</p>
-          <h2>{activeStageInfo.connectionTitle}</h2>
-          <p>Projects do not create new sources here. They only connect to global sources from Settings.</p>
-        </div>
-
-        <dl className="source-meta-list">
-          <div>
-            <dt>Review step</dt>
-            <dd>{currentProcessStep}</dd>
-          </div>
-          <div>
-            <dt>Scope</dt>
-            <dd>{currentScope}</dd>
-          </div>
-          <div>
-            <dt>Project</dt>
-            <dd>{selectedReview.intelModel}</dd>
-          </div>
-          <div>
-            <dt>Source mode</dt>
-            <dd>Global shared library</dd>
-          </div>
-        </dl>
-      </aside>
-    </section>
-  )
-
   const renderCurrentStep = () => {
-    if (isMainStep) return renderMainStep()
     if (currentProcessStep === 'Sources') {
       return (
         <SourcesStep
@@ -708,11 +565,11 @@ export function ReviewEditor({
       return (
         <MappingStep
           activeMappingId={activeMappingId}
-          activeConnectionTargetId={activeConnectionTargetId}
           connectionsByTarget={connectionsByTarget}
           mappingConfigs={mappingConfigs}
           sourceDefinitions={sourceDefinitions}
           onSelectMapping={setActiveMappingId}
+          onSelectConnectionTarget={setActiveConnectionTargetId}
           onSaveMappings={saveMappingConfigs}
           onApplyMapping={applyMapping}
         />
@@ -853,6 +710,7 @@ export function ReviewEditor({
           <div className="header-meta">
             <span className={statusClassName[selectedReview.status]}>{selectedReview.status}</span>
             <ApiStatusBanner state={apiConnectionState} error={apiConnectionError} />
+            <LocalFileHelperStatus />
             <StorageStatusPanel
               status={storageStatus}
               loading={storageStatusLoading}
@@ -863,43 +721,64 @@ export function ReviewEditor({
 
         {renderCurrentStep()}
 
-        <section className="stage-purpose-card card" aria-label="Step purpose">
-          <div className="stage-purpose-header">
-            <div>
-              <p className="section-label">{purposeContent.eyebrow}</p>
-              <h3>{purposeContent.title}</h3>
+        {stepInfoExpanded ? (
+          <section className="stage-purpose-card card" aria-label="Step purpose">
+            <div className="stage-purpose-header">
+              <div>
+                <p className="section-label">{purposeContent.eyebrow}</p>
+                <h3>{purposeContent.title}</h3>
+              </div>
+              <button
+                type="button"
+                className="stage-purpose-toggle"
+                onClick={() => setStepInfoExpanded(false)}
+                aria-expanded={true}
+              >
+                Hide info
+              </button>
             </div>
-          </div>
 
-          <p className="stage-purpose-summary">{purposeContent.summary}</p>
+            <p className="stage-purpose-summary">{purposeContent.summary}</p>
 
-          <div className="stage-purpose-grid">
-            <article className="stage-purpose-item">
-              <span>Cel etapu</span>
-              <p>{purposeContent.goal}</p>
-            </article>
-            <article className="stage-purpose-item">
-              <span>Rola etapu w aplikacji</span>
-              <p>{purposeContent.function}</p>
-            </article>
-            <article className="stage-purpose-item">
-              <span>Twoja rola</span>
-              <p>{purposeContent.yourRole}</p>
-            </article>
-            <article className="stage-purpose-item">
-              <span>Przyklad w praktyce</span>
-              <p>{purposeContent.example}</p>
-            </article>
-            <article className="stage-purpose-item">
-              <span>Efekt etapu</span>
-              <p>{purposeContent.output}</p>
-            </article>
-            <article className="stage-purpose-item stage-purpose-item-next">
-              <span>Co dalej</span>
-              <p>{nextStep.description}</p>
-            </article>
+            <div className="stage-purpose-grid">
+              <article className="stage-purpose-item">
+                <span>Cel etapu</span>
+                <p>{purposeContent.goal}</p>
+              </article>
+              <article className="stage-purpose-item">
+                <span>Rola etapu w aplikacji</span>
+                <p>{purposeContent.function}</p>
+              </article>
+              <article className="stage-purpose-item">
+                <span>Twoja rola</span>
+                <p>{purposeContent.yourRole}</p>
+              </article>
+              <article className="stage-purpose-item">
+                <span>Przyklad w praktyce</span>
+                <p>{purposeContent.example}</p>
+              </article>
+              <article className="stage-purpose-item">
+                <span>Efekt etapu</span>
+                <p>{purposeContent.output}</p>
+              </article>
+              <article className="stage-purpose-item stage-purpose-item-next">
+                <span>Co dalej</span>
+                <p>{nextStep.description}</p>
+              </article>
+            </div>
+          </section>
+        ) : (
+          <div className="stage-purpose-collapsed-control">
+            <button
+              type="button"
+              className="stage-purpose-toggle"
+              onClick={() => setStepInfoExpanded(true)}
+              aria-expanded={false}
+            >
+              Show info
+            </button>
           </div>
-        </section>
+        )}
       </main>
     </div>
   )
