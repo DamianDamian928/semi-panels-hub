@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { localFileOpenLocationEndpoint } from '../../localFileHelper'
-import type { SourceCreateInput, SourceDefinition, SourceType, SourceUsage } from '../../types'
+import type { SourceCreateInput, SourceDefinition, SourceType } from '../../types'
 import { formatFileModifiedAt, formatFileSize, SourceTypeGlyph } from '../sharedReviewUi'
 
 type SourcesStepProps = {
@@ -21,7 +21,6 @@ type SourcesStepProps = {
 
 const localFileSourceTypes = new Set<SourceDefinition['type']>(['File', 'Manual export'])
 const sourceTypeOptions: SourceType[] = ['File', 'Folder', 'SQL', 'SharePoint', 'Manual export']
-const sourceUsageOptions: SourceUsage[] = ['BOM', 'Documentation', 'Costing']
 
 const defaultExpectedFormatByType: Record<SourceType, string> = {
   File: 'Excel workbook or CSV export',
@@ -82,7 +81,6 @@ export function SourcesStep({
   const [sourceDraft, setSourceDraft] = useState<SourceCreateInput>(() => createEmptySourceDraft())
   const [sourceFormError, setSourceFormError] = useState<string | null>(null)
   const [sourceOpenLocationError, setSourceOpenLocationError] = useState<string | null>(null)
-  const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false)
   const selectedSource = sourceDefinitions.find((source) => source.id === activeSourceId) ?? sourceDefinitions[0]
   const readyCount = sourceDefinitions.filter((source) => source.status === 'Ready').length
   const needsLocationCount = sourceDefinitions.filter((source) => source.status === 'Needs location').length
@@ -93,19 +91,6 @@ export function SourcesStep({
   const isSelectingSource = selectedSource ? sourceSelectionPendingId === selectedSource.id : false
   const isCheckingSelectedSource = selectedSource ? sourceAccessPendingId === selectedSource.id : false
   const selectedAccessCheck = selectedSource?.accessCheck
-
-  const updateDraftUsage = (usage: SourceUsage, enabled: boolean) => {
-    setSourceDraft((current) => {
-      const nextUsedFor = enabled
-        ? Array.from(new Set([...current.usedFor, usage]))
-        : current.usedFor.filter((item) => item !== usage)
-
-      return {
-        ...current,
-        usedFor: nextUsedFor.length ? nextUsedFor : current.usedFor,
-      }
-    })
-  }
 
   const submitNewSource = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -125,7 +110,6 @@ export function SourcesStep({
     })
     setSourceDraft(createEmptySourceDraft())
     setIsAddingSource(false)
-    setIsDetailPanelOpen(false)
   }
 
   const openSelectedSourceLocation = async () => {
@@ -153,7 +137,7 @@ export function SourcesStep({
   }
 
   return (
-    <section className={`sources-registry-grid ${isDetailPanelOpen ? 'sources-registry-grid-with-detail' : ''}`}>
+    <section className="sources-registry-grid sources-registry-grid-with-detail">
       <section className="workspace-main card sources-registry-main">
         <div className="sources-registry-header">
           <div>
@@ -168,7 +152,6 @@ export function SourcesStep({
               onClick={() => {
                 setSourceFormError(null)
                 setIsAddingSource(true)
-                setIsDetailPanelOpen(true)
               }}
             >
               Add source
@@ -227,7 +210,6 @@ export function SourcesStep({
                 onClick={() => {
                   onSelectSource(source.id)
                   setIsAddingSource(false)
-                  setIsDetailPanelOpen(true)
                 }}
               >
                 <span className="source-registry-type" role="img" aria-label={source.type} title={source.type}>
@@ -262,224 +244,176 @@ export function SourcesStep({
         </div>
       </section>
 
-      {isDetailPanelOpen ? (
       <aside className="workspace-side-panel card source-detail-panel" aria-label="Selected source details">
-        {isAddingSource || !selectedSource ? (
-          <form className="source-form" onSubmit={(event) => {
-            void submitNewSource(event).catch(() => undefined)
-          }}>
-            <div className="source-connector-header">
-              <div>
-                <p className="section-label">New source</p>
-                <h2>Add source</h2>
-                <p>Create a read-only source registry entry. File selection and access checks happen after the source is added.</p>
-              </div>
-              <button
-                type="button"
-                className="source-detail-close-button"
-                aria-label="Close source panel"
-                onClick={() => {
-                  setSourceFormError(null)
-                  setIsAddingSource(false)
-                  setIsDetailPanelOpen(false)
-                }}
-              >
-                Close
-              </button>
-            </div>
+            {isAddingSource || !selectedSource ? (
+              <form className="source-form" onSubmit={(event) => {
+                void submitNewSource(event).catch(() => undefined)
+              }}>
+                <div className="source-connector-header">
+                  <div>
+                    <p className="section-label">New source</p>
+                    <h2>Add source</h2>
+                    <p>Create a read-only source registry entry. File selection and access checks happen after the source is added.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="source-detail-close-button"
+                    aria-label="Close source panel"
+                    onClick={() => {
+                      setSourceFormError(null)
+                      setIsAddingSource(false)
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
 
-            <label className="source-form-field">
-              <span>Name</span>
-              <input
-                type="text"
-                value={sourceDraft.name}
-                onChange={(event) => setSourceDraft((current) => ({ ...current, name: event.target.value }))}
-                placeholder="e.g. Parts&BOM"
-              />
-            </label>
+                <label className="source-form-field">
+                  <span>Name</span>
+                  <input
+                    type="text"
+                    value={sourceDraft.name}
+                    onChange={(event) => setSourceDraft((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="e.g. Parts&BOM"
+                  />
+                </label>
 
-            <label className="source-form-field">
-              <span>Type</span>
-              <select
-                value={sourceDraft.type}
-                onChange={(event) => {
-                  const nextType = event.target.value as SourceType
-                  setSourceDraft((current) => ({
-                    ...current,
-                    type: nextType,
-                    expectedFormat: defaultExpectedFormatByType[nextType],
-                  }))
-                }}
-              >
-                {sourceTypeOptions.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </label>
+                <label className="source-form-field">
+                  <span>Type</span>
+                  <select
+                    value={sourceDraft.type}
+                    onChange={(event) => {
+                      const nextType = event.target.value as SourceType
+                      setSourceDraft((current) => ({
+                        ...current,
+                        type: nextType,
+                        expectedFormat: defaultExpectedFormatByType[nextType],
+                      }))
+                    }}
+                  >
+                    {sourceTypeOptions.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                </label>
 
-            <fieldset className="source-form-fieldset">
-              <legend>Used for</legend>
-              <div className="source-form-checks">
-                {sourceUsageOptions.map((usage) => (
-                  <label key={usage}>
-                    <input
-                      type="checkbox"
-                      checked={sourceDraft.usedFor.includes(usage)}
-                      onChange={(event) => updateDraftUsage(usage, event.target.checked)}
-                    />
-                    <span>{usage}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+                {sourceFormError ? <p className="source-selection-error">{sourceFormError}</p> : null}
+                {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
 
-            <label className="source-form-field">
-              <span>Expected format</span>
-              <input
-                type="text"
-                value={sourceDraft.expectedFormat}
-                onChange={(event) => setSourceDraft((current) => ({ ...current, expectedFormat: event.target.value }))}
-              />
-            </label>
+                <div className="source-detail-actions">
+                  <button type="submit" className="secondary-button" disabled={sourceMutationPending}>
+                    {sourceMutationPending ? 'Adding...' : 'Save source'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={sourceMutationPending}
+                    onClick={() => {
+                      setSourceFormError(null)
+                      setIsAddingSource(false)
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <div className="source-connector-header">
+                  <div>
+                    <p className="section-label">Source configuration</p>
+                    <h2>{selectedSource.name}</h2>
+                  </div>
+                </div>
 
-            <label className="source-form-field">
-              <span>Owner</span>
-              <input
-                type="text"
-                value={sourceDraft.owner}
-                onChange={(event) => setSourceDraft((current) => ({ ...current, owner: event.target.value }))}
-              />
-            </label>
-
-            <label className="source-form-field">
-              <span>Description</span>
-              <textarea
-                value={sourceDraft.description}
-                onChange={(event) => setSourceDraft((current) => ({ ...current, description: event.target.value }))}
-                rows={4}
-                placeholder="Short reason this source exists in the registry."
-              />
-            </label>
-
-            {sourceFormError ? <p className="source-selection-error">{sourceFormError}</p> : null}
-            {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
-
-            <div className="source-detail-actions">
-              <button type="submit" className="secondary-button" disabled={sourceMutationPending}>
-                {sourceMutationPending ? 'Adding...' : 'Save source'}
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={sourceMutationPending}
-                onClick={() => {
-                  setSourceFormError(null)
-                  setIsAddingSource(false)
-                  setIsDetailPanelOpen(false)
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        ) : (
-          <>
-            <div className="source-connector-header">
-              <div>
-                <p className="section-label">Source configuration</p>
-                <h2>{selectedSource.name}</h2>
-              </div>
-              <button
-                type="button"
-                className="source-detail-close-button"
-                aria-label="Close source panel"
-                onClick={() => setIsDetailPanelOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-
-            <p className="source-detail-section-title">Details</p>
-            <dl className="source-property-list">
-              <div className="source-property-row">
-                <dt>Status</dt>
-                <dd>
-                  <span className={`source-status source-status-${statusToneClass}`}>
-                    <span className="source-status-dot" />
-                    {selectedSource.status}
-                  </span>
-                </dd>
-              </div>
-              <div className="source-property-row source-property-row-stacked">
-                <dt>Location</dt>
-                <dd>
+                <p className="source-detail-section-title">Details</p>
+                <dl className="source-property-list">
+                  <div className="source-property-row">
+                    <dt>Status</dt>
+                    <dd>
+                      <span className={`source-status source-status-${statusToneClass}`}>
+                        <span className="source-status-dot" />
+                        {selectedSource.status}
+                      </span>
+                    </dd>
+                  </div>
+                  <div className="source-property-row source-property-row-stacked source-property-row-location">
+                    <dt>
+                      <span>Location</span>
+                      {selectedSourceFile ? (
+                        <button
+                          type="button"
+                          className="source-location-icon-button"
+                          onClick={() => {
+                            void openSelectedSourceLocation()
+                          }}
+                          aria-label="Open local location"
+                          title="Open local location"
+                        >
+                          <SourceTypeGlyph type="Folder" className="source-location-icon-glyph" />
+                        </button>
+                      ) : null}
+                    </dt>
+                    <dd>
+                      {selectedSourceFile ? (
+                        <span className="source-location-path">
+                          {selectedSource.location}
+                        </span>
+                      ) : (
+                        selectedSource.location
+                      )}
+                    </dd>
+                  </div>
                   {selectedSourceFile ? (
-                    <button
-                      type="button"
-                      className="source-location-link"
-                      onClick={() => {
-                        void openSelectedSourceLocation()
-                      }}
-                      title="Open local location"
-                    >
-                      {selectedSource.location}
-                    </button>
-                  ) : (
-                    selectedSource.location
-                  )}
-                </dd>
-              </div>
-              {selectedSourceFile ? (
-                <>
+                    <>
+                      <div className="source-property-row">
+                        <dt>File name</dt>
+                        <dd>{selectedSourceFile.name}</dd>
+                      </div>
+                      <div className="source-property-row">
+                        <dt>Modified</dt>
+                        <dd>{formatFileModifiedAt(selectedSourceFile.modifiedAt)}</dd>
+                      </div>
+                    </>
+                  ) : null}
                   <div className="source-property-row">
-                    <dt>File name</dt>
-                    <dd>{selectedSourceFile.name}</dd>
+                    <dt>Last access check</dt>
+                    <dd>{selectedAccessCheck ? formatFileModifiedAt(selectedAccessCheck.checkedAt) : 'Never checked'}</dd>
                   </div>
                   <div className="source-property-row">
-                    <dt>Modified</dt>
-                    <dd>{formatFileModifiedAt(selectedSourceFile.modifiedAt)}</dd>
+                    <dt>Check result</dt>
+                    <dd>{selectedAccessCheck?.message ?? 'Access has not been checked yet.'}</dd>
                   </div>
-                </>
-              ) : null}
-              <div className="source-property-row">
-                <dt>Last access check</dt>
-                <dd>{selectedAccessCheck ? formatFileModifiedAt(selectedAccessCheck.checkedAt) : 'Never checked'}</dd>
-              </div>
-              <div className="source-property-row">
-                <dt>Check result</dt>
-                <dd>{selectedAccessCheck?.message ?? 'Access has not been checked yet.'}</dd>
-              </div>
-              <div className="source-property-row">
-                <dt>Readable</dt>
-                <dd>{selectedAccessCheck ? (selectedAccessCheck.readable ? 'Yes' : 'No') : 'Unknown'}</dd>
-              </div>
-            </dl>
+                  <div className="source-property-row">
+                    <dt>Readable</dt>
+                    <dd>{selectedAccessCheck ? (selectedAccessCheck.readable ? 'Yes' : 'No') : 'Unknown'}</dd>
+                  </div>
+                </dl>
 
-            {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
-            {sourceOpenLocationError ? <p className="source-selection-error">{sourceOpenLocationError}</p> : null}
+                {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
+                {sourceOpenLocationError ? <p className="source-selection-error">{sourceOpenLocationError}</p> : null}
 
-            <div className="source-detail-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={!canChooseLocalFile || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId) || sourceMutationPending}
-                onClick={() => onChooseSourceFile(selectedSource.id)}
-              >
-                {isSelectingSource ? 'Opening...' : selectedSourceFile ? 'Change local file' : 'Choose local file'}
-              </button>
-              <button
-                type="button"
-                className="source-remove-button"
-                disabled={sourceMutationPending || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId)}
-                onClick={() => onRemoveSource(selectedSource.id)}
-              >
-                {sourceMutationPending ? 'Removing...' : 'Remove source'}
-              </button>
-            </div>
-          </>
-        )}
+                <div className="source-detail-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={!canChooseLocalFile || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId) || sourceMutationPending}
+                    onClick={() => onChooseSourceFile(selectedSource.id)}
+                  >
+                    {isSelectingSource ? 'Opening...' : selectedSourceFile ? 'Change local file' : 'Choose local file'}
+                  </button>
+                  <button
+                    type="button"
+                    className="source-remove-button"
+                    disabled={sourceMutationPending || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId)}
+                    onClick={() => onRemoveSource(selectedSource.id)}
+                  >
+                    {sourceMutationPending ? 'Removing...' : 'Remove source'}
+                  </button>
+                </div>
+              </>
+            )}
       </aside>
-      ) : null}
     </section>
   )
 }

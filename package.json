@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1",
     "dev": "vite",
     "api": "node server/api-server.mjs",
     "helper": "node scripts/local-file-helper.mjs",

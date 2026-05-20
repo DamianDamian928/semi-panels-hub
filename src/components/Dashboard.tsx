@@ -246,7 +246,7 @@ export function Dashboard({
               <thead>
                 <tr>
                   {dashboardColumns.map(renderColumnHeader)}
-                  {isAdmin ? <th>Actions</th> : null}
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -266,13 +266,18 @@ export function Dashboard({
                         <td>{row.lastUpdated}</td>
                       </>
                     )}
-                    {isAdmin ? (
-                      <td>
-                        <button type="button" className="table-action" onClick={() => onOpenReview(row.id)}>
-                          Edit
+                    <td className="dashboard-actions-cell">
+                      <div className="dashboard-action-stack">
+                        {isAdmin ? (
+                          <button type="button" className="table-action" onClick={() => onOpenReview(row.id)}>
+                            Edit
+                          </button>
+                        ) : null}
+                        <button type="button" className="table-action table-action-secondary" disabled title="Open review view is planned.">
+                          Open
                         </button>
-                      </td>
-                    ) : null}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

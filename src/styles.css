@@ -139,6 +139,29 @@ h3 {
   font-weight: 700;
 }
 
+.dashboard-actions-cell {
+  min-width: 104px;
+}
+
+.dashboard-action-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.table-action-secondary {
+  color: #9fb4cf;
+}
+
+.table-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.table-action:disabled:hover {
+  border-color: rgba(97, 155, 244, 0.2);
+  background: linear-gradient(180deg, rgba(18, 29, 44, 0.96), rgba(12, 22, 35, 0.96));
+}
+
 .header-button:disabled {
   cursor: wait;
   opacity: 0.68;
@@ -2900,25 +2923,38 @@ tbody tr:last-child td {
   line-height: 1.4;
 }
 
-.source-location-link {
-  display: inline;
+.source-location-path {
+  display: block;
   max-width: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
   color: #c7dbf2;
   font: inherit;
   text-align: left;
-  text-decoration: underline;
-  text-decoration-color: rgba(132, 200, 255, 0.35);
-  text-underline-offset: 3px;
-  cursor: pointer;
   line-height: inherit;
 }
 
-.source-location-link:hover {
-  color: var(--text);
-  text-decoration-color: rgba(132, 200, 255, 0.75);
+.source-location-icon-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(126, 145, 168, 0.22);
+  border-radius: 7px;
+  background: rgba(11, 20, 31, 0.72);
+  color: #9cc7f4;
+  cursor: pointer;
+}
+
+.source-location-icon-button:hover {
+  border-color: rgba(132, 200, 255, 0.46);
+  background: rgba(23, 43, 66, 0.86);
+  color: #d8e1ec;
+}
+
+.source-location-icon-glyph {
+  width: 20px;
+  height: 20px;
 }
 
 .source-type-icon-file {
@@ -3394,6 +3430,12 @@ tbody tr:last-child td {
   text-transform: uppercase;
 }
 
+.source-detail-panel .source-property-row-location dt {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
 .source-detail-panel .source-property-row dd {
   color: #d8e1ec;
   font-size: 12px;
@@ -3424,10 +3466,9 @@ tbody tr:last-child td {
   height: 5px;
 }
 
-.source-detail-panel .source-location-link {
+.source-detail-panel .source-location-path {
   color: #d8e1ec;
   font-weight: 400;
-  text-decoration-color: rgba(216, 225, 236, 0.24);
 }
 
 .source-detail-panel .source-detail-actions {
