@@ -179,8 +179,8 @@ const chooseHeaderRow = (rows) => {
   return scored.sort((left, right) => right.score - left.score)[0]?.row
 }
 
-export const readExcelPreview = async (filePath, options = {}) => {
-  const rowLimit = Math.min(Math.max(Number(options.rowLimit ?? 100), 1), 500)
+const readExcelSheetData = async (filePath, options = {}) => {
+  const rowLimit = options.rowLimit === undefined ? null : Math.max(Number(options.rowLimit), 1)
   const workbookBuffer = await readFile(filePath)
   const zip = readZipEntries(workbookBuffer)
   const workbookXml = zip.getText('xl/workbook.xml')
@@ -204,7 +204,11 @@ export const readExcelPreview = async (filePath, options = {}) => {
   const sheetXml = zip.getText(selectedSheet.path)
   if (!sheetXml) throw new Error(`Sheet "${selectedSheet.name}" could not be read.`)
 
-  const rows = readRows(sheetXml, sharedStrings, rowLimit + 25)
+  const rows = readRows(
+    sheetXml,
+    sharedStrings,
+    rowLimit === null ? Number.POSITIVE_INFINITY : rowLimit + 25,
+  )
   const headerRow = chooseHeaderRow(rows)
   const headerRowIndex = headerRow?.rowNumber ?? 1
   const columnCount = Math.max(...rows.map((row) => row.cells.length), headerRow?.cells.length ?? 0, 0)
@@ -212,9 +216,9 @@ export const readExcelPreview = async (filePath, options = {}) => {
     const value = normalizeCellText(headerRow?.cells[index])
     return value || `Column ${index + 1}`
   })
-  const previewRows = rows
+  const dataRows = rows
     .filter((row) => row.rowNumber > headerRowIndex)
-    .slice(0, rowLimit)
+    .slice(0, rowLimit ?? undefined)
     .map((row) => Array.from({ length: columnCount }, (_, index) => normalizeCellText(row.cells[index])))
 
   return {
@@ -223,7 +227,15 @@ export const readExcelPreview = async (filePath, options = {}) => {
     activeSheetName: selectedSheet.name,
     headerRow: headerRowIndex,
     columns,
-    rows: previewRows,
+    rows: dataRows,
     rowLimit,
   }
 }
+
+export const readExcelPreview = async (filePath, options = {}) => {
+  const rowLimit = Math.min(Math.max(Number(options.rowLimit ?? 100), 1), 500)
+  return readExcelSheetData(filePath, { ...options, rowLimit })
+}
+
+export const readExcelWorksheet = async (filePath, options = {}) =>
+  readExcelSheetData(filePath, options)

@@ -313,9 +313,12 @@ h3 {
 }
 
 .storage-status-panel {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  justify-items: start;
+  column-gap: 8px;
+  row-gap: 2px;
   min-height: 30px;
   padding: 6px 10px;
   border: 1px solid rgba(126, 172, 220, 0.14);
@@ -324,6 +327,7 @@ h3 {
   color: var(--muted);
   font-family: 'Cascadia Mono', Consolas, 'Roboto Mono', 'Courier New', monospace;
   font-variant-numeric: tabular-nums;
+  text-align: left;
 }
 
 .storage-status-panel span {
@@ -338,6 +342,14 @@ h3 {
   color: #d8e1ec;
   font-size: 12px;
   font-weight: 500;
+}
+
+.storage-status-detail {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
 }
 
 .storage-status-panel small {
@@ -693,6 +705,13 @@ tbody tr:last-child td {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.header-meta > .status,
+.header-meta > .api-status-banner,
+.header-meta > .local-helper-status,
+.header-meta > .storage-status-panel {
+  min-height: 44px;
 }
 
 .meta-chip {
@@ -2748,6 +2767,18 @@ tbody tr:last-child td {
 .sources-registry-grid-with-detail {
   grid-template-columns: minmax(0, 1fr) 360px;
   align-items: stretch;
+}
+
+.validation-workspace-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+}
+
+.validation-workspace-grid .connection-target-node {
+  min-height: 68px;
+}
+
+.validation-workspace-grid .connection-target-node .status {
+  justify-self: end;
 }
 
 .sources-registry-main,

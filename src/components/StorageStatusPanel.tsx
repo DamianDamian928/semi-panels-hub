@@ -40,9 +40,11 @@ export function StorageStatusPanel({ status, loading, error }: StorageStatusPane
   return (
     <section className="storage-status-panel" aria-live="polite" title={status.detail}>
       <span>Data storage</span>
-      <strong>{status.subject}: {status.storage}</strong>
-      <small>{status.records} records{status.mappedColumns !== undefined ? ` / ${status.mappedColumns} columns` : ''}</small>
-      <small>Refreshed {formatStorageTime(status.refreshedAt)}</small>
+      <span className="storage-status-detail">
+        <small>{status.storage}</small>
+        <small>{status.records} records{status.mappedColumns !== undefined ? ` / ${status.mappedColumns} columns` : ''}</small>
+        <small>Refreshed {formatStorageTime(status.refreshedAt)}</small>
+      </span>
     </section>
   )
 }

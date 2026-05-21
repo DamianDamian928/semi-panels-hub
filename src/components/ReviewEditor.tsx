@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { WorkflowViewPayload } from '../apiClient'
 import type { OutputRow } from '../domain/workflowSelectors'
+import { useBomMatvarComparison } from '../hooks/useBomMatvarComparison'
 import { useReviewImportPreview } from '../hooks/useReviewImportPreview'
+import { useBomMatvarValidation } from '../hooks/useBomMatvarValidation'
 import { useSourceConnections } from '../hooks/useSourceConnections'
 import { useSourceMappings } from '../hooks/useSourceMappings'
 import { useSourceRegistry } from '../hooks/useSourceRegistry'
@@ -9,6 +11,7 @@ import { useStorageStatus } from '../hooks/useStorageStatus'
 import type {
   AuditEvent,
   ApiConnectionState,
+  ConnectionTargetId,
   DashboardRow,
   DecisionFilter,
   DecisionRecord,
@@ -35,14 +38,15 @@ import { StorageStatusPanel } from './StorageStatusPanel'
 import {
   connectionsCustomStyles,
   BrandGlyph,
+  connectionTargets,
   sidebarSteps,
   SidebarGlyph,
   statusClassName,
   validationStateClassName,
 } from './sharedReviewUi'
-import { ConnectionsStep } from './steps/ConnectionsStep'
+import { ConnectionsStep, type ConnectionsStepHandle } from './steps/ConnectionsStep'
 import { DecisionsStep } from './steps/DecisionsStep'
-import { MappingStep } from './steps/MappingStep'
+import { MappingStep, type MappingStepHandle } from './steps/MappingStep'
 import { OutputStep } from './steps/OutputStep'
 import { ReviewStep } from './steps/ReviewStep'
 import { SourcesStep } from './steps/SourcesStep'
@@ -205,10 +209,13 @@ type ReviewEditorProps = {
   onBackToDashboard: () => void
 }
 
+type PendingExitNavigation =
+  | { type: 'dashboard' }
+  | { type: 'step'; step: ProcessStep }
+
 export function ReviewEditor({
   selectedReview,
   sourceDefinitions,
-  validationStatesBySource,
   reviewIssues,
   decisionRecords,
   outputItems,
@@ -248,6 +255,15 @@ export function ReviewEditor({
   const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0]?.id ?? '')
   const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
   const [stepInfoExpanded, setStepInfoExpanded] = useState(true)
+  const [activeValidationTargetId, setActiveValidationTargetId] = useState<ConnectionTargetId>('bom-matvar')
+  const [validationRefreshKey, setValidationRefreshKey] = useState(0)
+  const [activeComparisonTargetId, setActiveComparisonTargetId] = useState<ConnectionTargetId>('bom-matvar')
+  const [comparisonRefreshKey, setComparisonRefreshKey] = useState(0)
+  const [pendingExitNavigation, setPendingExitNavigation] = useState<PendingExitNavigation | null>(null)
+  const [exitGuardSaving, setExitGuardSaving] = useState(false)
+  const [exitGuardError, setExitGuardError] = useState<string | null>(null)
+  const connectionsStepRef = useRef<ConnectionsStepHandle | null>(null)
+  const mappingStepRef = useRef<MappingStepHandle | null>(null)
 
   const currentProcessStep = activeProcessStep
   const {
@@ -309,8 +325,138 @@ export function ReviewEditor({
     storageStatusLoading,
     storageStatusError,
   } = useStorageStatus(currentProcessStep)
+  const validationInputSignature = useMemo(
+    () => JSON.stringify({
+      reviewId: selectedReview.id,
+      reviewCells: selectedReview.dashboardCells ?? null,
+      connectionsByTarget,
+      mappingConfigs,
+      sources: sourceDefinitions.map((source) => ({
+        id: source.id,
+        name: source.name,
+        status: source.status,
+        sourceFile: source.sourceFile
+          ? {
+              path: source.sourceFile.path,
+              modifiedAt: source.sourceFile.modifiedAt,
+              sizeBytes: source.sourceFile.sizeBytes,
+            }
+          : null,
+      })),
+    }),
+    [connectionsByTarget, mappingConfigs, selectedReview.dashboardCells, selectedReview.id, sourceDefinitions],
+  )
+  const {
+    bomMatvarValidation,
+    bomMatvarValidationLoading,
+    bomMatvarValidationError,
+    refreshBomMatvarValidation,
+  } = useBomMatvarValidation(
+    selectedReview.id,
+    currentProcessStep === 'Validation',
+    validationRefreshKey,
+    validationInputSignature,
+  )
+  const {
+    bomMatvarComparison,
+    bomMatvarComparisonLoading,
+    bomMatvarComparisonError,
+    refreshBomMatvarComparison,
+  } = useBomMatvarComparison(
+    selectedReview.id,
+    currentProcessStep === 'Comparison',
+    comparisonRefreshKey,
+    validationInputSignature,
+  )
   const nextStep = nextStepByProcess[currentProcessStep]
   const purposeContent = stepPurposeContent[currentProcessStep]
+  const guardedStepLabel = currentProcessStep === 'Connections' || currentProcessStep === 'Mapping'
+    ? currentProcessStep
+    : 'current screen'
+
+  const getActiveExitGuard = () => {
+    if (currentProcessStep === 'Connections') return connectionsStepRef.current
+    if (currentProcessStep === 'Mapping') return mappingStepRef.current
+    return null
+  }
+
+  const runExitNavigation = (navigation: PendingExitNavigation) => {
+    setPendingExitNavigation(null)
+    setExitGuardError(null)
+
+    if (navigation.type === 'dashboard') {
+      onBackToDashboard()
+      return
+    }
+
+    if (navigation.step === 'Validation') {
+      setValidationRefreshKey((current) => current + 1)
+    }
+    if (navigation.step === 'Comparison') {
+      setComparisonRefreshKey((current) => current + 1)
+    }
+
+    setActiveProcessStep(navigation.step)
+  }
+
+  const requestExitNavigation = (navigation: PendingExitNavigation) => {
+    if (navigation.type === 'step' && navigation.step === currentProcessStep) {
+      if (navigation.step === 'Validation') {
+        setValidationRefreshKey((current) => current + 1)
+      }
+      if (navigation.step === 'Comparison') {
+        setComparisonRefreshKey((current) => current + 1)
+      }
+      return
+    }
+
+    const activeGuard = getActiveExitGuard()
+    if (activeGuard?.hasUnsavedChanges()) {
+      setPendingExitNavigation(navigation)
+      setExitGuardError(null)
+      return
+    }
+
+    runExitNavigation(navigation)
+  }
+
+  const requestProcessStepChange = (step: ProcessStep) => {
+    requestExitNavigation({ type: 'step', step })
+  }
+
+  const requestBackToDashboard = () => {
+    requestExitNavigation({ type: 'dashboard' })
+  }
+
+  const stayOnGuardedStep = () => {
+    setPendingExitNavigation(null)
+    setExitGuardError(null)
+  }
+
+  const discardAndContinue = () => {
+    if (!pendingExitNavigation) return
+
+    getActiveExitGuard()?.discardChanges()
+    runExitNavigation(pendingExitNavigation)
+  }
+
+  const saveAndContinue = async () => {
+    if (!pendingExitNavigation) return
+
+    const navigation = pendingExitNavigation
+    const activeGuard = getActiveExitGuard()
+    setExitGuardSaving(true)
+    setExitGuardError(null)
+
+    try {
+      await activeGuard?.saveChanges()
+      runExitNavigation(navigation)
+      if (navigation.type === 'step') setExitGuardSaving(false)
+    } catch (error: unknown) {
+      setExitGuardError(error instanceof Error ? error.message : 'Changes could not be saved.')
+      setExitGuardSaving(false)
+    }
+  }
 
   const renderSourceNamesStep = (
     stepName: Exclude<ProcessStep, 'Connections'>,
@@ -374,150 +520,420 @@ export function ReviewEditor({
   )
 
   const renderValidationStep = () => {
-    const validationRows = sourceDefinitions.map((source) => ({
-      id: source.id,
-      name: source.name,
-      ...(validationStatesBySource[source.name] ?? { state: 'Not checked' as ValidationState, message: 'Validation has not been run yet.' }),
-    }))
-    const summary = validationRows.reduce(
-      (acc, row) => {
-        acc[row.state] += 1
-        return acc
-      },
-      { Valid: 0, Warning: 0, Error: 0, 'Not checked': 0 } as Record<ValidationState, number>,
-    )
+    const validation = bomMatvarValidation
+    const checks = validation?.checks ?? []
+    const bomL0Rows = validation?.bomL0Rows ?? []
+    const activeValidationTarget = connectionTargets.find((target) => target.id === activeValidationTargetId) ?? connectionTargets[0]
+    const activeTargetSourceCount = connectionsByTarget[activeValidationTarget.id]?.length ?? 0
+    const summary = validation?.summary ?? {
+      connectedSources: 0,
+      mappedSources: 0,
+      matchedRows: 0,
+      validPartNumbers: 0,
+      invalidPartNumbers: 0,
+    }
+    const validationStatus: ValidationState = validation?.status ?? 'Not checked'
 
-    return (
-      <section className="workspace-main-grid">
-        <section className="workspace-main card">
-          <div className="workspace-card workspace-card-single">
-            <div className="workspace-copy">
+    const getTargetValidationStatus = (targetId: ConnectionTargetId): ValidationState =>
+      targetId === 'bom-matvar' ? validationStatus : 'Not checked'
+
+    const renderTargetDetails = () => {
+      if (activeValidationTarget.id !== 'bom-matvar') {
+        return (
+          <>
+            <div className="sources-registry-header mapping-header">
+              <div>
+                <p className="section-label">Validation</p>
+                <h3>{activeValidationTarget.label}</h3>
+                <p>{activeValidationTarget.description}</p>
+              </div>
+              <div className="sources-registry-actions mapping-registry-actions" aria-label="Validation actions">
+                <span className={validationStateClassName['Not checked']}>Not checked</span>
+              </div>
+            </div>
+
+            <div className="source-summary-grid" aria-label={`${activeValidationTarget.label} validation summary`}>
+              <article className="source-summary-card">
+                <span>Connected sources</span>
+                <strong>{activeTargetSourceCount}</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Implemented rules</span>
+                <strong>0</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Checks</span>
+                <strong>0</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Open issues</span>
+                <strong>0</strong>
+              </article>
+            </div>
+
+            <div className="source-registry-empty">
+              <strong>Validation rules are not implemented yet</strong>
+              <p>This target is ready in the Validation workspace. Rules and result tables will be added here in the next BOM validation passes.</p>
+            </div>
+          </>
+        )
+      }
+
+      return (
+        <>
+          <div className="sources-registry-header mapping-header">
+            <div>
               <p className="section-label">Validation</p>
-              <h3>Validation status</h3>
-              <p>This screen checks whether connected sources are ready for the next steps.</p>
+              <h3>BOM Matvar validation</h3>
+              <p>Checks connected BOM Matvar sources and builds the first BOM L0 context for the selected review.</p>
             </div>
-
-            <div className="stats-grid" style={{ marginBottom: 20 }}>
-              {(['Valid', 'Warning', 'Error', 'Not checked'] as ValidationState[]).map((state) => (
-                <article key={state} className="stat-card">
-                  <span>{state}</span>
-                  <strong>{summary[state]}</strong>
-                </article>
-              ))}
+            <div className="sources-registry-actions mapping-registry-actions" aria-label="Validation actions">
+              <span className={validationStateClassName[validationStatus]}>{validationStatus}</span>
+              <button
+                type="button"
+                className="secondary-button source-action-button"
+                onClick={() => {
+                  void refreshBomMatvarValidation()
+                }}
+                disabled={bomMatvarValidationLoading}
+              >
+                {bomMatvarValidationLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
             </div>
+          </div>
 
+          <div className="source-summary-grid" aria-label="BOM Matvar validation summary">
+            <article className="source-summary-card">
+              <span>Connected sources</span>
+              <strong>{summary.connectedSources}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Mapped sources</span>
+              <strong>{summary.mappedSources}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>BOM L0 matches</span>
+              <strong>{summary.matchedRows}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Invalid PN</span>
+              <strong>{summary.invalidPartNumbers}</strong>
+            </article>
+          </div>
+
+          {bomMatvarValidationError ? <p className="impact-error">{bomMatvarValidationError}</p> : null}
+
+          <p className="source-detail-section-title">Validation checks</p>
+          {bomMatvarValidationLoading && !validation ? (
+            <div className="source-registry-empty">
+              <strong>Loading validation</strong>
+              <p>Reading saved connections, mappings and BOM L0 source data.</p>
+            </div>
+          ) : checks.length ? (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Source</th>
                     <th>Status</th>
+                    <th>Check</th>
+                    <th>Source</th>
                     <th>Message</th>
+                    <th>Detail</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {validationRows.map((row) => (
+                  {checks.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.name}</td>
                       <td>
-                        <span className={validationStateClassName[row.state]}>{row.state}</span>
+                        <span className={validationStateClassName[row.status]}>{row.status}</span>
                       </td>
+                      <td>{row.label}</td>
+                      <td>{row.source}</td>
                       <td>{row.message}</td>
+                      <td>{row.detail}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
+          ) : (
+            <div className="source-registry-empty">
+              <strong>No validation data</strong>
+              <p>Refresh validation after BOM Matvar sources and mappings are saved.</p>
+            </div>
+          )}
+
+          <p className="source-detail-section-title">BOM L0 matched rows</p>
+          {bomL0Rows.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Part Number</th>
+                    <th>Description</th>
+                    <th>Data aktualizacji</th>
+                    <th>PN check</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bomL0Rows.map((row) => (
+                    <tr key={`${row.partNumber}-${row.description}`}>
+                      <td>{row.partNumber}</td>
+                      <td>{row.description}</td>
+                      <td title={row.updatedAtRaw}>{row.updatedAt}</td>
+                      <td>
+                        <span className={validationStateClassName[row.partNumberValid ? 'Valid' : 'Warning']}>
+                          {row.partNumberValid ? 'Valid' : 'Warning'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="source-registry-empty">
+              <strong>No BOM L0 matches</strong>
+              <p>Matched rows will appear here when BOM L0 Description contains the review Intel Description.</p>
+            </div>
+          )}
+        </>
+      )
+    }
+
+    return (
+      <section className="sources-registry-grid sources-registry-grid-with-detail mapping-registry-grid validation-workspace-grid">
+        <section className="workspace-main card sources-registry-main mapping-registry-main">
+          {renderTargetDetails()}
         </section>
 
-        <aside className="workspace-side-panel card" aria-label="Validation summary">
+        <aside className="workspace-side-panel card source-detail-panel mapping-detail-panel" aria-label="Workflow validation targets">
           <div className="sidebar-header">
-            <p className="section-label">Step</p>
-            <h2>Validation</h2>
-            <p>Quick summary of source readiness for this review.</p>
+            <p className="section-label">Workflow targets</p>
+            <h2>Validation scope</h2>
+            <p>Select a target to review validation readiness and results.</p>
           </div>
 
-          <dl className="source-meta-list">
-            <div>
-              <dt>Project</dt>
-              <dd>{selectedReview.intelModel}</dd>
-            </div>
-            <div>
-              <dt>Total sources</dt>
-              <dd>{validationRows.length}</dd>
-            </div>
-            <div>
-              <dt>Ready to continue</dt>
-              <dd>{summary.Error === 0 ? 'Yes' : 'No'}</dd>
-            </div>
-          </dl>
+          <div className="connection-target-list">
+            {connectionTargets.map((target) => {
+              const isActive = target.id === activeValidationTarget.id
+              const targetStatus = getTargetValidationStatus(target.id)
+              const connectedCount = connectionsByTarget[target.id]?.length ?? 0
+
+              return (
+                <button
+                  key={target.id}
+                  type="button"
+                  className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''}`}
+                  onClick={() => setActiveValidationTargetId(target.id)}
+                >
+                  <span className="connection-node-main">
+                    <strong>{target.label}</strong>
+                    <small>{target.group}</small>
+                  </span>
+                  <span className="connection-node-count">{connectedCount}</span>
+                  <span className={validationStateClassName[targetStatus]}>{targetStatus}</span>
+                </button>
+              )
+            })}
+          </div>
         </aside>
       </section>
     )
   }
 
   const renderComparisonStep = () => {
-    const comparisonRows = sourceDefinitions.map((source) => ({
-      id: source.id,
-      name: source.name,
-      status: source.status === 'Ready' ? 'Ready' : 'Needs review',
-      comparedWith: source.usedFor.join(', '),
-      message: 'Connection is ready to support future comparison rules.',
-    }))
-    const readyCount = comparisonRows.filter((row) => row.status === 'Ready').length
+    const comparison = bomMatvarComparison
+    const activeComparisonTarget = connectionTargets.find((target) => target.id === activeComparisonTargetId) ?? connectionTargets[0]
+    const activeTargetSourceCount = connectionsByTarget[activeComparisonTarget.id]?.length ?? 0
+    const comparisonStatus: ValidationState = comparison?.status ?? 'Not checked'
+    const rules = comparison?.rules ?? []
+    const summary = comparison?.summary ?? {
+      rules: 0,
+      ok: 0,
+      fallback: 0,
+      missing: 0,
+      context: 0,
+      sourceRows: 0,
+    }
 
-    return (
-      <section className="workspace-main-grid">
-        <section className="workspace-main card">
-          <div className="workspace-card workspace-card-single">
-            <div className="workspace-copy">
+    const getTargetComparisonStatus = (targetId: ConnectionTargetId): ValidationState =>
+      targetId === 'bom-matvar' ? comparisonStatus : 'Not checked'
+
+    const getRuleStatusClass = (status: string) => {
+      if (status === 'OK' || status === 'Context') return validationStateClassName.Valid
+      if (status === 'Fallback' || status === 'Info') return validationStateClassName.Warning
+      return validationStateClassName.Error
+    }
+
+    const renderTargetDetails = () => {
+      if (activeComparisonTarget.id !== 'bom-matvar') {
+        return (
+          <>
+            <div className="sources-registry-header mapping-header">
+              <div>
+                <p className="section-label">Comparison</p>
+                <h3>{activeComparisonTarget.label}</h3>
+                <p>{activeComparisonTarget.description}</p>
+              </div>
+              <div className="sources-registry-actions mapping-registry-actions" aria-label="Comparison actions">
+                <span className={validationStateClassName['Not checked']}>Not checked</span>
+              </div>
+            </div>
+
+            <div className="source-summary-grid" aria-label={`${activeComparisonTarget.label} comparison summary`}>
+              <article className="source-summary-card">
+                <span>Connected sources</span>
+                <strong>{activeTargetSourceCount}</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Implemented rules</span>
+                <strong>0</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Matches</span>
+                <strong>0</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Issues</span>
+                <strong>0</strong>
+              </article>
+            </div>
+
+            <div className="source-registry-empty">
+              <strong>Comparison rules are not implemented yet</strong>
+              <p>This target is ready in the Comparison workspace. Business rules will be added here after its validation data is available.</p>
+            </div>
+          </>
+        )
+      }
+
+      return (
+        <>
+          <div className="sources-registry-header mapping-header">
+            <div>
               <p className="section-label">Comparison</p>
-              <h3>Comparison overview</h3>
-              <p>This screen will be used for BOM comparison rules, detected differences and review-ready problems.</p>
+              <h3>BOM Matvar comparison</h3>
+              <p>Runs the first BOM L0 scope rules for the selected review before issues are created.</p>
             </div>
-
-            <div className="stats-grid" style={{ marginBottom: 20 }}>
-              <article className="stat-card">
-                <span>Ready</span>
-                <strong>{readyCount}</strong>
-              </article>
-              <article className="stat-card">
-                <span>Needs review</span>
-                <strong>{comparisonRows.length - readyCount}</strong>
-              </article>
+            <div className="sources-registry-actions mapping-registry-actions" aria-label="Comparison actions">
+              <span className={validationStateClassName[comparisonStatus]}>{comparisonStatus}</span>
+              <button
+                type="button"
+                className="secondary-button source-action-button"
+                onClick={() => {
+                  void refreshBomMatvarComparison()
+                }}
+                disabled={bomMatvarComparisonLoading}
+              >
+                {bomMatvarComparisonLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
             </div>
+          </div>
 
+          <div className="source-summary-grid" aria-label="BOM Matvar comparison summary">
+            <article className="source-summary-card">
+              <span>Rules</span>
+              <strong>{summary.rules}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>OK</span>
+              <strong>{summary.ok}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Fallback</span>
+              <strong>{summary.fallback}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Missing</span>
+              <strong>{summary.missing}</strong>
+            </article>
+          </div>
+
+          {bomMatvarComparisonError ? <p className="impact-error">{bomMatvarComparisonError}</p> : null}
+
+          <p className="source-detail-section-title">Comparison rules</p>
+          {bomMatvarComparisonLoading && !comparison ? (
+            <div className="source-registry-empty">
+              <strong>Loading comparison</strong>
+              <p>Reading current BOM Matvar validation context and applying BOM L0 rules.</p>
+            </div>
+          ) : rules.length ? (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Source</th>
-                    <th>Compared with</th>
                     <th>Status</th>
+                    <th>Rule</th>
+                    <th>Expected</th>
+                    <th>Result</th>
+                    <th>Part Number</th>
+                    <th>Description</th>
                     <th>Message</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {comparisonRows.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.name}</td>
-                      <td>{row.comparedWith}</td>
-                      <td>{row.status}</td>
-                      <td>{row.message}</td>
+                  {rules.map((rule) => (
+                    <tr key={rule.id}>
+                      <td>
+                        <span className={getRuleStatusClass(rule.status)}>{rule.status}</span>
+                      </td>
+                      <td>{rule.rule}</td>
+                      <td>{rule.expected}</td>
+                      <td>{rule.result}</td>
+                      <td>{rule.partNumber || '-'}</td>
+                      <td>{rule.description || '-'}</td>
+                      <td>{rule.message}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
+          ) : (
+            <div className="source-registry-empty">
+              <strong>No comparison data</strong>
+              <p>Refresh comparison after BOM Matvar validation has current data.</p>
+            </div>
+          )}
+        </>
+      )
+    }
+
+    return (
+      <section className="sources-registry-grid sources-registry-grid-with-detail mapping-registry-grid validation-workspace-grid">
+        <section className="workspace-main card sources-registry-main mapping-registry-main">
+          {renderTargetDetails()}
         </section>
 
-        <aside className="workspace-side-panel card" aria-label="Comparison summary">
+        <aside className="workspace-side-panel card source-detail-panel mapping-detail-panel" aria-label="Workflow comparison targets">
           <div className="sidebar-header">
-            <p className="section-label">Step</p>
-            <h2>Comparison</h2>
-            <p>Here we will define what is compared, what differs and what becomes an issue for review.</p>
+            <p className="section-label">Workflow targets</p>
+            <h2>Comparison scope</h2>
+            <p>Select a target to review comparison rules and results.</p>
+          </div>
+
+          <div className="connection-target-list">
+            {connectionTargets.map((target) => {
+              const isActive = target.id === activeComparisonTarget.id
+              const targetStatus = getTargetComparisonStatus(target.id)
+              const connectedCount = connectionsByTarget[target.id]?.length ?? 0
+
+              return (
+                <button
+                  key={target.id}
+                  type="button"
+                  className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''}`}
+                  onClick={() => setActiveComparisonTargetId(target.id)}
+                >
+                  <span className="connection-node-main">
+                    <strong>{target.label}</strong>
+                    <small>{target.group}</small>
+                  </span>
+                  <span className="connection-node-count">{connectedCount}</span>
+                  <span className={validationStateClassName[targetStatus]}>{targetStatus}</span>
+                </button>
+              )
+            })}
           </div>
         </aside>
       </section>
@@ -552,6 +968,7 @@ export function ReviewEditor({
     if (currentProcessStep === 'Connections') {
       return (
         <ConnectionsStep
+          ref={connectionsStepRef}
           activeConnectionTargetId={activeConnectionTargetId}
           connectionsByTarget={connectionsByTarget}
           mappingConfigs={mappingConfigs}
@@ -564,6 +981,7 @@ export function ReviewEditor({
     if (currentProcessStep === 'Mapping') {
       return (
         <MappingStep
+          ref={mappingStepRef}
           activeMappingId={activeMappingId}
           connectionsByTarget={connectionsByTarget}
           mappingConfigs={mappingConfigs}
@@ -605,7 +1023,7 @@ export function ReviewEditor({
           onMarkIssueForDecision={markIssueForDecision}
           onSetActiveDecisionIssue={setActiveDecisionIssueId}
           onSetDecisionFilterAll={() => setDecisionFilter('All')}
-          onSetProcessStep={setActiveProcessStep}
+          onSetProcessStep={requestProcessStepChange}
         />
       )
     }
@@ -625,7 +1043,7 @@ export function ReviewEditor({
           onSelectReviewIssue={setActiveReviewIssueId}
           onSetDecisionFilter={setDecisionFilter}
           onSetReviewIssueFilter={setReviewIssueFilter}
-          onSetProcessStep={setActiveProcessStep}
+          onSetProcessStep={requestProcessStepChange}
           onSaveDecisionStatus={saveDecisionStatus}
         />
       )
@@ -651,7 +1069,7 @@ export function ReviewEditor({
         onSelectOutputItem={setActiveOutputItemId}
         onSetOutputFilter={setOutputFilter}
         onSetActiveAuditEvent={setActiveAuditEventId}
-        onSetProcessStep={setActiveProcessStep}
+        onSetProcessStep={requestProcessStepChange}
         onPrepareOutput={savePreparedOutput}
       />
     )
@@ -674,7 +1092,7 @@ export function ReviewEditor({
             <strong>{selectedReview.intelModel}</strong>
           </div>
 
-          <button type="button" className="sidebar-dashboard-link" onClick={onBackToDashboard}>
+          <button type="button" className="sidebar-dashboard-link" onClick={requestBackToDashboard}>
             Back to Dashboard
           </button>
         </div>
@@ -687,7 +1105,7 @@ export function ReviewEditor({
                 key={step}
                 type="button"
                 className={`review-nav-item ${isActive ? 'review-nav-item-active' : ''}`}
-                onClick={() => setActiveProcessStep(step)}
+                onClick={() => requestProcessStepChange(step)}
               >
                 <span className="review-nav-icon-wrap" aria-hidden="true">
                   <SidebarGlyph name={icon} className="review-nav-icon" />
@@ -779,6 +1197,39 @@ export function ReviewEditor({
             </button>
           </div>
         )}
+
+        {pendingExitNavigation ? (
+          <div className="impact-modal-overlay" role="dialog" aria-modal="true" aria-label="Unsaved changes">
+            <div className="impact-modal">
+              <div className="impact-modal-header">
+                <p className="section-label">Unsaved changes</p>
+                <h3>Leave {guardedStepLabel}?</h3>
+                <p>You have unsaved changes on this screen. Save them before leaving, discard them, or stay here.</p>
+              </div>
+
+              {exitGuardError ? <p className="impact-error">{exitGuardError}</p> : null}
+
+              <div className="impact-modal-actions">
+                <button type="button" className="secondary-button" onClick={stayOnGuardedStep} disabled={exitGuardSaving}>
+                  Stay here
+                </button>
+                <button type="button" className="secondary-button" onClick={discardAndContinue} disabled={exitGuardSaving}>
+                  Discard changes
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    void saveAndContinue()
+                  }}
+                  disabled={exitGuardSaving}
+                >
+                  {exitGuardSaving ? 'Saving...' : 'Save and continue'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   )

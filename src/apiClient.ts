@@ -115,6 +115,74 @@ export type StorageStatusPayload = {
   }
 }
 
+export type BomMatvarValidationPayload = {
+  review: {
+    id: string
+    item: string
+    intelDescription: string
+  }
+  targetId: 'bom-matvar'
+  status: ValidationState
+  summary: {
+    connectedSources: number
+    mappedSources: number
+    matchedRows: number
+    validPartNumbers: number
+    invalidPartNumbers: number
+  }
+  checks: Array<{
+    id: string
+    label: string
+    source: string
+    status: ValidationState
+    message: string
+    detail: string
+  }>
+  connectedSources: Array<{
+    id: string
+    name: string
+    status: string
+    role: string
+    mappingStatus: string
+    mappedColumns: string[]
+  }>
+  bomL0Rows: Array<{
+    partNumber: string
+    description: string
+    updatedAtRaw: string
+    updatedAt: string
+    partNumberValid: boolean
+  }>
+}
+
+export type BomMatvarComparisonPayload = {
+  review: {
+    id: string
+    item: string
+    intelDescription: string
+  }
+  targetId: 'bom-matvar'
+  status: ValidationState
+  summary: {
+    rules: number
+    ok: number
+    fallback: number
+    missing: number
+    context: number
+    sourceRows: number
+  }
+  rules: Array<{
+    id: string
+    rule: string
+    expected: string
+    result: string
+    partNumber: string
+    description: string
+    status: 'OK' | 'Fallback' | 'Missing' | 'Context' | 'Info'
+    message: string
+  }>
+}
+
 export type TechnicalStatus = {
   generatedAt: string
   app: {
@@ -263,6 +331,12 @@ export const fetchTechnicalStatus = () => fetchJson<TechnicalStatus>('/api/techn
 
 export const fetchStorageStatus = (step: ProcessStep) =>
   fetchJson<StorageStatusPayload>(`/api/storage-status?step=${encodeURIComponent(step)}`)
+
+export const fetchBomMatvarValidation = (reviewId: string) =>
+  fetchJson<BomMatvarValidationPayload>(`/api/reviews/${encodeURIComponent(reviewId)}/bom-matvar/validation`)
+
+export const fetchBomMatvarComparison = (reviewId: string) =>
+  fetchJson<BomMatvarComparisonPayload>(`/api/reviews/${encodeURIComponent(reviewId)}/bom-matvar/comparison`)
 
 export const apiCreateSource = (source: SourceCreateInput) =>
   postJson<BootstrapResponse>('/api/sources', source)

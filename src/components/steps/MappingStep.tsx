@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { apiFetchSourcePreview } from '../../apiClient'
 import type { SourcePreviewPayload } from '../../apiClient'
 import { createColumnMapping, createDefaultMappingConfig, createMappingId } from '../../domain/sourceMapping'
@@ -22,6 +22,12 @@ type MappingStepProps = {
   onSelectConnectionTarget: (targetId: ConnectionTargetId) => void
   onSaveMappings: (mappingConfigs: Record<string, SourceMappingConfig>) => Promise<void>
   onApplyMapping: (mappingId: string, mappingConfig: SourceMappingConfig) => Promise<void>
+}
+
+export type MappingStepHandle = {
+  hasUnsavedChanges: () => boolean
+  saveChanges: () => Promise<void>
+  discardChanges: () => void
 }
 
 type MappingRow = {
@@ -63,7 +69,7 @@ const targetFieldOptions = [
   'UoM',
 ]
 
-export function MappingStep({
+export const MappingStep = forwardRef<MappingStepHandle, MappingStepProps>(function MappingStep({
   activeMappingId,
   connectionsByTarget,
   mappingConfigs,
@@ -72,7 +78,7 @@ export function MappingStep({
   onSelectConnectionTarget,
   onSaveMappings,
   onApplyMapping,
-}: MappingStepProps) {
+}, ref) {
   const [studioOpen, setStudioOpen] = useState(false)
   const [activeSheetName, setActiveSheetName] = useState<string | null>(null)
   const [filterText, setFilterText] = useState('')
@@ -225,6 +231,27 @@ export function MappingStep({
     await onSaveMappings(draftMappingConfigs)
   }
 
+  const saveMappingChanges = async () => {
+    setMappingApplyPending(true)
+    setMappingApplyMessage(null)
+    setMappingApplyError(null)
+
+    try {
+      if (hasUnsavedMappingChanges) await saveDraftMappings()
+      if (isMountedRef.current) {
+        setPendingMappingSave(null)
+        setMappingApplyMessage('Mapping changes were saved.')
+      }
+    } catch (error: unknown) {
+      if (isMountedRef.current) {
+        setMappingApplyError(error instanceof Error ? error.message : 'Mapping changes could not be saved.')
+      }
+      throw error
+    } finally {
+      if (isMountedRef.current) setMappingApplyPending(false)
+    }
+  }
+
   const confirmPendingMappingSave = async () => {
     if (!pendingMappingSave) return
 
@@ -255,6 +282,12 @@ export function MappingStep({
       if (isMountedRef.current) setMappingApplyPending(false)
     }
   }
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasUnsavedMappingChanges,
+    saveChanges: saveMappingChanges,
+    discardChanges: cancelMappingChanges,
+  }), [hasUnsavedMappingChanges, draftMappingConfigs, mappingConfigs])
 
   const pendingSaveBomImpact = pendingMappingSave?.action === 'apply'
     ? Boolean(pendingMappingSave.mappingConfig?.targetId.startsWith('bom-') || bomMappingChanges.length)
@@ -796,4 +829,4 @@ export function MappingStep({
       ) : null}
     </>
   )
-}
+})

@@ -344,7 +344,7 @@ export const connectionsCustomStyles = `
   .connections-header p:last-child { max-width: 760px; margin: 0; color: #9fb4cf; line-height: 1.55; }
   .connections-registry-actions { align-items: flex-start; }
   .change-review-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
-  .change-review-status { min-height: 36px; display: inline-flex; align-items: center; padding: 0 12px; border: 1px solid rgba(98,132,173,0.16); border-radius: 8px; background: rgba(8, 17, 29, 0.46); color: #9fb4cf; font-size: 12px; font-weight: 800; }
+  .change-review-status { min-height: 46px; display: inline-flex; align-items: center; padding: 10px 16px; border: 1px solid rgba(98,132,173,0.16); border-radius: 8px; background: rgba(8, 17, 29, 0.46); color: #9fb4cf; font-size: 12px; font-weight: 800; }
   .change-review-status-dirty { border-color: rgba(255, 201, 112, 0.32); background: rgba(68, 48, 18, 0.34); color: #ffd68a; }
   .change-review-bar .secondary-button,
   .change-review-bar .primary-button { min-height: 36px; padding: 0 12px; border-radius: 8px; font-size: 12px; font-weight: 800; }
@@ -371,15 +371,14 @@ export const connectionsCustomStyles = `
   .connection-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
   .connection-link-path { fill: none; stroke: rgba(126, 172, 220, 0.24); stroke-width: 0.8; vector-effect: non-scaling-stroke; }
   .connection-link-path-active { stroke: rgba(132, 200, 255, 0.72); stroke-width: 1.5; filter: none; }
-  .connection-source-node { min-height: 106px; display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 14px; align-items: center; padding: 14px; border-radius: 8px; border: 1px solid rgba(98,132,173,0.18); background: rgba(10, 20, 33, 0.76); cursor: grab; }
+  .connection-source-node { min-height: 74px; display: grid; grid-template-columns: 76px minmax(0, 1fr) 96px; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(98,132,173,0.18); background: rgba(10, 20, 33, 0.76); cursor: grab; }
   .connection-source-node:active { cursor: grabbing; }
   .connection-source-node-active { border-color: rgba(106, 211, 149, 0.5); background: rgba(16, 41, 37, 0.48); box-shadow: none; }
-  .connection-source-node-content { min-width: 0; display: grid; gap: 9px; }
+  .connection-source-node-content { min-width: 0; display: grid; gap: 7px; }
   .connection-source-node-top { min-width: 0; display: grid; align-items: center; }
-  .connection-source-node-top h4 { margin: 0 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f4f9ff; font-size: 14px; }
-  .connection-source-node-top p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8ea7c7; font-size: 12px; }
-  .connection-source-node-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #9fb4cf; font-size: 12px; }
-  .connection-node-action { min-height: 32px; width: 100%; border-radius: 7px; border: 1px solid rgba(97,155,244,0.28); background: rgba(8,29,56,0.58); color: #e7f2ff; font-size: 12px; font-weight: 800; cursor: pointer; }
+  .connection-source-node-top h4 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f4f9ff; font-size: 14px; }
+  .connection-source-node-meta { display: flex; align-items: center; gap: 10px; color: #9fb4cf; font-size: 12px; }
+  .connection-node-action { min-height: 34px; width: 96px; border-radius: 7px; border: 1px solid rgba(97,155,244,0.28); background: rgba(8,29,56,0.58); color: #e7f2ff; font-size: 12px; font-weight: 800; cursor: pointer; }
   .connection-node-action:hover { border-color: rgba(119, 190, 255, 0.68); background: rgba(16, 48, 84, 0.86); }
   .connection-node-action-remove { border-color: rgba(255,138,122,0.28); background: rgba(69, 30, 31, 0.54); color: #ffbfaf; }
   .connection-source-app-icon { position: relative; width: 66px; height: 60px; display: inline-grid; place-items: center; }
@@ -545,5 +544,5 @@ export const connectionsCustomStyles = `
   @media (max-width: 1100px) { .mapping-studio-body { grid-template-columns: 1fr; } .mapping-studio-selection { min-height: 260px; } .mapping-studio-registry-header { display: grid; } }
   @media (max-width: 980px) { .connection-map { grid-template-columns: 1fr; } .connection-canvas { display: none; } .connections-header { display: grid; } }
   @media (max-width: 760px) { .mapping-table-head { display: none; } .mapping-row { grid-template-columns: 1fr; gap: 8px; } }
-  @media (max-width: 640px) { .connections-stage { padding: 20px; } .connection-target-node { min-height: 68px; } .connection-source-node { grid-template-columns: 64px minmax(0, 1fr); min-height: 96px; } .connection-source-app-icon { width: 58px; height: 54px; transform: scale(0.9); transform-origin: left center; } }
+  @media (max-width: 640px) { .connections-stage { padding: 20px; } .connection-target-node { min-height: 68px; } .connection-source-node { grid-template-columns: 76px minmax(0, 1fr); min-height: 104px; } .connection-node-action { grid-column: 2; width: 100%; } }
 `

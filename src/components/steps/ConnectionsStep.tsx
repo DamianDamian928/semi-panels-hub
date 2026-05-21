@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { createMappingId } from '../../domain/sourceMapping'
 import type { ConnectionTargetId, SourceDefinition, SourceMappingConfig } from '../../types'
@@ -13,6 +13,12 @@ type ConnectionsStepProps = {
   sourceDefinitions: SourceDefinition[]
   onSelectConnectionTarget: (targetId: ConnectionTargetId) => void
   onSaveConnections: (connectionsByTarget: ConnectionsByTarget) => Promise<void>
+}
+
+export type ConnectionsStepHandle = {
+  hasUnsavedChanges: () => boolean
+  saveChanges: () => Promise<void>
+  discardChanges: () => void
 }
 
 const getStatusToken = (status: SourceDefinition['status']) => status.toLowerCase().replace(/\s+/g, '-')
@@ -49,14 +55,14 @@ type ConnectionChange = {
   mappingColumns: number
 }
 
-export function ConnectionsStep({
+export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStepProps>(function ConnectionsStep({
   activeConnectionTargetId,
   connectionsByTarget,
   mappingConfigs,
   sourceDefinitions,
   onSelectConnectionTarget,
   onSaveConnections,
-}: ConnectionsStepProps) {
+}, ref) {
   const [draggedSourceId, setDraggedSourceId] = useState<string | null>(null)
   const [draftConnectionsByTarget, setDraftConnectionsByTarget] = useState<ConnectionsByTarget>(connectionsByTarget)
   const [impactReviewOpen, setImpactReviewOpen] = useState(false)
@@ -159,7 +165,7 @@ export function ConnectionsStep({
     setConnectionSaveError(null)
   }
 
-  const confirmConnectionChanges = async () => {
+  const saveConnectionChanges = async () => {
     setConnectionSavePending(true)
     setConnectionSaveError(null)
 
@@ -168,10 +174,21 @@ export function ConnectionsStep({
       setImpactReviewOpen(false)
     } catch (error: unknown) {
       setConnectionSaveError(error instanceof Error ? error.message : 'Connection changes could not be saved.')
+      throw error
     } finally {
       setConnectionSavePending(false)
     }
   }
+
+  const confirmConnectionChanges = async () => {
+    await saveConnectionChanges().catch(() => undefined)
+  }
+
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => hasUnsavedConnectionChanges,
+    saveChanges: saveConnectionChanges,
+    discardChanges: cancelConnectionChanges,
+  }), [hasUnsavedConnectionChanges, draftConnectionsByTarget, connectionsByTarget])
 
   const measureConnectionLinks = () => {
     const canvasElement = canvasRef.current
@@ -338,7 +355,6 @@ export function ConnectionsStep({
             <div className="connection-source-list">
               {sourceDefinitions.map((source) => {
                 const connectedToActive = activeSourceIds.includes(source.id)
-                const connectionCount = connectionTargets.filter((target) => (draftConnectionsByTarget[target.id] ?? []).includes(source.id)).length
                 const statusToken = getStatusToken(source.status)
                 const appIcon = getSourceAppIcon(source)
 
@@ -383,32 +399,28 @@ export function ConnectionsStep({
                     </span>
                     <div className="connection-source-node-content">
                       <div className="connection-source-node-top">
-                      <div>
                         <h4>{source.sourceFile?.name ?? source.name}</h4>
-                        <p>{source.type} / {source.owner}</p>
-                      </div>
                       </div>
                       <div className="connection-source-node-meta">
                         <span className={`source-status source-status-${statusToken}`}>
                           <span className="source-status-dot" />
                           {source.status}
                         </span>
-                        <span>{connectionCount} links</span>
                       </div>
-                      <button
-                        type="button"
-                        className={`connection-node-action ${connectedToActive ? 'connection-node-action-remove' : ''}`}
-                        onClick={() => {
-                          if (connectedToActive) {
-                            updateDraftConnection(activeTarget.id, source.id, 'disconnect')
-                          } else {
-                            updateDraftConnection(activeTarget.id, source.id, 'connect')
-                          }
-                        }}
-                      >
-                        {connectedToActive ? 'Disconnect' : `Connect to ${activeTarget.label}`}
-                      </button>
                     </div>
+                    <button
+                      type="button"
+                      className={`connection-node-action ${connectedToActive ? 'connection-node-action-remove' : ''}`}
+                      onClick={() => {
+                        if (connectedToActive) {
+                          updateDraftConnection(activeTarget.id, source.id, 'disconnect')
+                        } else {
+                          updateDraftConnection(activeTarget.id, source.id, 'connect')
+                        }
+                      }}
+                    >
+                      {connectedToActive ? 'Disconnect' : 'Connect'}
+                    </button>
                   </article>
                 )
               })}
@@ -485,4 +497,4 @@ export function ConnectionsStep({
       ) : null}
     </section>
   )
-}
+})

@@ -7,7 +7,7 @@
     "start": "npm run start:local",
     "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1",
     "dev": "vite",
-    "api": "node server/api-server.mjs",
+    "api": "node --watch server/api-server.mjs",
     "helper": "node scripts/local-file-helper.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
