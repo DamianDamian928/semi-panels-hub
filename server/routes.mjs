@@ -183,7 +183,7 @@ const getReviewItem = (review) =>
   review?.id ||
   ''
 
-const getMappingColumn = (mapping, aliases) => {
+const getMappingColumnMapping = (mapping, aliases) => {
   const normalizedAliases = aliases.map(normalizeMappingField)
   const mappedColumn = mapping?.columnMappings?.find((columnMapping) => {
     const sourceColumn = normalizeMappingField(columnMapping.sourceColumn)
@@ -191,8 +191,14 @@ const getMappingColumn = (mapping, aliases) => {
     return normalizedAliases.includes(sourceColumn) || normalizedAliases.includes(targetField)
   })
 
-  return mappedColumn?.sourceColumn ?? ''
+  return mappedColumn ?? null
 }
+
+const getMappingColumn = (mapping, aliases) =>
+  getMappingColumnMapping(mapping, aliases)?.sourceColumn ?? ''
+
+const getMappingSheetName = (mapping) =>
+  mapping?.sheetName || mapping?.columnMappings?.find((columnMapping) => columnMapping.sheetName)?.sheetName || ''
 
 const parseExcelSerialDate = (value) => {
   const serial = Number(String(value ?? '').replace(',', '.'))
@@ -252,6 +258,211 @@ const sourceLooksLikeBomL0 = (source, mapping) => {
   )
 }
 
+const sourceLooksLikeMatvarBom = (source, mapping) => {
+  const sourceText = [
+    source?.name,
+    source?.sourceFile?.name,
+    source?.description,
+  ].join(' ').toLowerCase()
+
+  const mappedColumns = new Set((mapping?.columnMappings ?? []).map((columnMapping) => normalizeMappingField(columnMapping.sourceColumn)))
+  const mappedTargets = new Set((mapping?.columnMappings ?? []).map((columnMapping) => normalizeMappingField(columnMapping.targetField)))
+  const hasMappedField = (aliases) => aliases.some((alias) => {
+    const normalized = normalizeMappingField(alias)
+    return mappedColumns.has(normalized) || mappedTargets.has(normalized)
+  })
+
+  if (
+    hasMappedField(['Item']) &&
+    hasMappedField(['ORACLE Item Description', 'ORACLE Item Desc', 'ORACLE Description']) &&
+    hasMappedField(['INTEL Description', 'INTEL Description (C)', 'Intel Description']) &&
+    hasMappedField(['Phantom L1', 'PHANTOM L1', 'PhantomL1']) &&
+    hasMappedField(['Scope', 'SCOPE'])
+  ) {
+    return true
+  }
+
+  return sourceText.includes('matvar') || sourceText.includes('mass production')
+}
+
+const mapWorksheetRow = (row, columnIndexByName, mappingByField) =>
+  Object.fromEntries(Object.entries(mappingByField).map(([field, columnMapping]) => {
+    if (!columnMapping) return [field, '']
+    const value = row[columnIndexByName[columnMapping.sourceColumn]]
+    return [field, applyMappingTransform(value, columnMapping.transform)]
+  }))
+
+const normalizeMatvarMappedRow = (row) => {
+  const phantomL1 = String(row.phantomL1 ?? '').trim()
+  const scope = String(row.scope ?? '').trim()
+
+  if (!scope && phantomL1.toLowerCase() === 'full scope') {
+    return {
+      ...row,
+      phantomL1: '',
+      scope: 'Full Scope',
+    }
+  }
+
+  return row
+}
+
+const swapUSforEU = (description) => String(description ?? '').replace(/\bUS\b/g, 'EU').replace(/_US/g, '_EU')
+
+const computeBomL0Area2Rows = (rows) => {
+  const rules = [
+    { id: 'Controller Scope | EU | 10', tokens: ['controller scope', 'eu', '10'] },
+    { id: 'Heat Scope | US | 20', tokens: ['heat scope', 'us', '20'] },
+    { id: 'N2 Heat | 30', tokens: ['n2 heat', '30'] },
+  ]
+
+  const out = rules
+    .map((rule) => {
+      const match = rows.find((row) => {
+        const description = String(row.description ?? '').toLowerCase()
+        return rule.tokens.every((token) => description.includes(token))
+      })
+      return match
+        ? {
+            kind: 'ok',
+            partNumber: match.partNumber,
+            description: match.description,
+          }
+        : null
+    })
+    .filter(Boolean)
+
+  const anyController = rows.find((row) => String(row.description ?? '').toLowerCase().includes('controller scope'))
+  const hasControllerEu10 = rows.some((row) => {
+    const description = String(row.description ?? '').toLowerCase()
+    return description.includes('controller scope') && description.includes('eu') && description.includes('10')
+  })
+  if (anyController && !hasControllerEu10) {
+    out.push({
+      kind: 'nok',
+      partNumber: 'NOK, brakujący PN.',
+      description: swapUSforEU(anyController.description),
+    })
+  }
+
+  const hasHeatInArea2 = out.some((row) => String(row.description ?? '').toLowerCase().includes('heat scope'))
+  if (!hasHeatInArea2) {
+    const heatRows = rows.filter((row) => String(row.description ?? '').toLowerCase().includes('heat scope'))
+    if (heatRows.length === 1) {
+      out.push({
+        kind: 'ok',
+        partNumber: heatRows[0].partNumber,
+        description: heatRows[0].description,
+      })
+    }
+  }
+
+  return out
+}
+
+const computeMatvarTargets = (bomL0Area2Rows) => {
+  const expected = {}
+  const scopesSet = new Set()
+  const pickScope = (description) => {
+    const text = String(description ?? '').toLowerCase()
+    if (text.includes('controller scope')) return 'Control Scope'
+    if (text.includes('heat scope')) return 'Heat Scope'
+    if (text.includes('n2 heat')) return 'N2 Heat'
+    if (text.includes('full scope')) return 'Full Scope'
+    return null
+  }
+
+  bomL0Area2Rows.forEach((row) => {
+    const scope = pickScope(row.description)
+    const partNumber = String(row.partNumber ?? '').trim()
+    if (!scope) return
+    scopesSet.add(scope)
+    if (scope !== 'Full Scope' && partNumberPattern.test(partNumber)) {
+      expected[scope] = partNumber
+    }
+  })
+
+  const scopes = [...scopesSet]
+  if (bomL0Area2Rows.length > 1 && !scopesSet.has('Full Scope')) scopes.push('Full Scope')
+
+  const order = ['Full Scope', 'Control Scope', 'Heat Scope', 'N2 Heat']
+  scopes.sort((left, right) => order.indexOf(left) - order.indexOf(right))
+
+  return { scopes, expected }
+}
+
+const buildMatvarRowsView = ({ matvarRows, matvarTargets }) => {
+  const existingByScope = new Map()
+
+  matvarRows.forEach((row) => {
+    const scopeKey = String(row.scope ?? '').trim().toLowerCase()
+    if (!scopeKey || existingByScope.has(scopeKey)) return
+
+    existingByScope.set(scopeKey, {
+      item: row.item,
+      oracleItemDescription: row.oracleItemDescription,
+      intelDescription: row.intelDescription,
+      phantomL1: row.phantomL1,
+      scope: row.scope,
+      verificationText: '',
+      verificationStatus: 'None',
+      expectedPhantomL1: '',
+      isSynthetic: false,
+    })
+  })
+
+  return matvarTargets.scopes.map((targetScope) => {
+    const scopeKey = targetScope.trim().toLowerCase()
+    const base = existingByScope.get(scopeKey)
+
+    if (targetScope === 'Full Scope') {
+      return base ?? {
+        item: '',
+        oracleItemDescription: '',
+        intelDescription: '',
+        phantomL1: '',
+        scope: 'Full Scope',
+        verificationText: 'NOK, brakujący matvar',
+        verificationStatus: 'NOK',
+        expectedPhantomL1: '',
+        isSynthetic: true,
+      }
+    }
+
+    const expectedPhantomL1 = matvarTargets.expected[targetScope] ?? ''
+    if (!base) {
+      return {
+        item: '',
+        oracleItemDescription: '',
+        intelDescription: '',
+        phantomL1: expectedPhantomL1,
+        scope: targetScope,
+        verificationText: 'NOK, brakujący matvar',
+        verificationStatus: 'NOK',
+        expectedPhantomL1,
+        isSynthetic: true,
+      }
+    }
+
+    if (!expectedPhantomL1) {
+      return {
+        ...base,
+        verificationText: 'NOK, brakujący matvar',
+        verificationStatus: 'NOK',
+        expectedPhantomL1,
+      }
+    }
+
+    const isMatching = base.phantomL1 && base.phantomL1 === expectedPhantomL1
+    return {
+      ...base,
+      verificationText: isMatching ? 'OK, zgodne' : 'NOK, niezgodny matvar',
+      verificationStatus: isMatching ? 'OK' : 'NOK',
+      expectedPhantomL1,
+    }
+  })
+}
+
 const buildBomMatvarValidation = async (reviewId) => {
   const review = workflowRepository.getReview(reviewId)
 
@@ -293,6 +504,7 @@ const buildBomMatvarValidation = async (reviewId) => {
     mapping: mappingConfigs[`bom-matvar:${source.id}`] ?? null,
   }))
   const bomL0Entry = sourceMappings.find(({ source, mapping }) => sourceLooksLikeBomL0(source, mapping))
+  const matvarBomEntry = sourceMappings.find(({ source, mapping }) => !sourceLooksLikeBomL0(source, mapping) && sourceLooksLikeMatvarBom(source, mapping))
 
   if (!bomL0Entry) {
     checks.push(createValidationCheck({
@@ -316,6 +528,10 @@ const buildBomMatvarValidation = async (reviewId) => {
         matchedRows: 0,
         validPartNumbers: 0,
         invalidPartNumbers: 0,
+        matvarRows: 0,
+        matvarOk: 0,
+        matvarNok: 0,
+        matvarSynthetic: 0,
       },
       checks,
       connectedSources: sourceMappings.map(({ source, mapping }) => ({
@@ -327,6 +543,7 @@ const buildBomMatvarValidation = async (reviewId) => {
         mappedColumns: mapping?.columnMappings?.map((columnMapping) => columnMapping.sourceColumn) ?? [],
       })),
       bomL0Rows: [],
+      matvarRows: [],
     }
   }
 
@@ -451,8 +668,131 @@ const buildBomMatvarValidation = async (reviewId) => {
         : 'Part Number format could not be checked without matched rows.',
   }))
 
+  let matvarRows = []
+
+  if (!matvarBomEntry) {
+    checks.push(createValidationCheck({
+      id: 'matvar-bom-source',
+      label: 'MATVAR BOM source',
+      status: 'Error',
+      message: 'MATVAR BOM source is not connected to BOM Matvar or does not have MATVAR columns mapped.',
+      detail: 'Required mapping: Item | ORACLE Item Description | INTEL Description | Phantom L1 | Scope',
+    }))
+  } else {
+    const { source: matvarSource, mapping: matvarMapping } = matvarBomEntry
+    const sourceName = matvarSource.sourceFile?.name ?? matvarSource.name
+    const itemMapping = getMappingColumnMapping(matvarMapping, ['Item'])
+    const oracleDescriptionMapping = getMappingColumnMapping(matvarMapping, ['ORACLE Item Description', 'ORACLE Item Desc', 'ORACLE Description'])
+    const intelDescriptionMapping = getMappingColumnMapping(matvarMapping, ['INTEL Description', 'INTEL Description (C)', 'Intel Description'])
+    const phantomL1Mapping = getMappingColumnMapping(matvarMapping, ['Phantom L1', 'PHANTOM L1', 'PhantomL1'])
+    const scopeMapping = getMappingColumnMapping(matvarMapping, ['Scope', 'SCOPE'])
+    const requiredMatvarColumns = [
+      { key: 'item', label: 'Item', mapping: itemMapping },
+      { key: 'oracleItemDescription', label: 'ORACLE Item Description', mapping: oracleDescriptionMapping },
+      { key: 'intelDescription', label: 'INTEL Description', mapping: intelDescriptionMapping },
+      { key: 'phantomL1', label: 'Phantom L1', mapping: phantomL1Mapping },
+      { key: 'scope', label: 'Scope', mapping: scopeMapping },
+    ]
+    const missingMatvarMappings = requiredMatvarColumns.filter((column) => !column.mapping)
+
+    checks.push(createValidationCheck({
+      id: 'matvar-bom-source',
+      label: 'MATVAR BOM source',
+      source: sourceName,
+      status: matvarSource.status === 'Ready' ? 'Valid' : 'Error',
+      message: matvarSource.status === 'Ready'
+        ? 'MATVAR BOM source is connected and ready.'
+        : `MATVAR BOM source status is ${matvarSource.status}.`,
+      detail: matvarSource.sourceFile?.path ?? matvarSource.location,
+    }))
+
+    checks.push(createValidationCheck({
+      id: 'matvar-bom-mapping',
+      label: 'MATVAR BOM required mapping',
+      source: sourceName,
+      status: missingMatvarMappings.length
+        ? 'Error'
+        : matvarMapping?.status === 'Ready'
+          ? 'Valid'
+          : 'Warning',
+      message: missingMatvarMappings.length
+        ? `Missing mapped column(s): ${missingMatvarMappings.map((column) => column.label).join(', ')}.`
+        : matvarMapping?.status === 'Ready'
+          ? 'Required MATVAR BOM columns are mapped.'
+          : 'Required MATVAR BOM columns are selected, but mapping is not marked Ready. Validation will read the selected columns.',
+      detail: requiredMatvarColumns
+        .map((column) => `${column.label}: ${column.mapping?.sheetName ?? 'missing'}/${column.mapping?.sourceColumn ?? 'missing'}`)
+        .join(' | '),
+    }))
+
+    if (!missingMatvarMappings.length && matvarSource.sourceFile?.path) {
+      try {
+        const worksheet = await readExcelWorksheet(matvarSource.sourceFile.path, {
+          sheetName: getMappingSheetName(matvarMapping),
+        })
+        const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
+        const missingWorksheetColumns = requiredMatvarColumns.filter((column) => !(column.mapping.sourceColumn in columnIndexByName))
+
+        checks.push(createValidationCheck({
+          id: 'matvar-bom-worksheet-columns',
+          label: 'MATVAR BOM worksheet columns',
+          source: sourceName,
+          status: missingWorksheetColumns.length ? 'Error' : 'Valid',
+          message: missingWorksheetColumns.length
+            ? `Mapped column(s) not found in workbook: ${missingWorksheetColumns.map((column) => column.mapping.sourceColumn).join(', ')}.`
+            : `Workbook sheet "${worksheet.activeSheetName}" contains all mapped MATVAR columns.`,
+          detail: `${worksheet.rows.length} row(s) read with full worksheet reader.`,
+        }))
+
+        if (!missingWorksheetColumns.length && intelDescription) {
+          const mappingByField = {
+            item: itemMapping,
+            oracleItemDescription: oracleDescriptionMapping,
+            intelDescription: intelDescriptionMapping,
+            phantomL1: phantomL1Mapping,
+            scope: scopeMapping,
+          }
+
+          const filteredMatvarRows = worksheet.rows
+            .map((row) => mapWorksheetRow(row, columnIndexByName, mappingByField))
+            .map(normalizeMatvarMappedRow)
+            .filter((row) => String(row.intelDescription ?? '').includes(intelDescription))
+
+          const matvarTargets = computeMatvarTargets(computeBomL0Area2Rows(bomL0Rows))
+          matvarRows = buildMatvarRowsView({
+            matvarRows: filteredMatvarRows,
+            matvarTargets,
+          })
+
+          checks.push(createValidationCheck({
+            id: 'matvar-bom-intel-description-match',
+            label: 'MATVAR Intel Description match',
+            source: sourceName,
+            status: filteredMatvarRows.length ? 'Valid' : 'Error',
+            message: filteredMatvarRows.length
+              ? `${filteredMatvarRows.length} MATVAR row(s) match "${intelDescription}".`
+              : `No MATVAR rows match "${intelDescription}".`,
+            detail: `Generated validation rows: ${matvarRows.length}.`,
+          }))
+        }
+      } catch (error) {
+        checks.push(createValidationCheck({
+          id: 'matvar-bom-read',
+          label: 'MATVAR BOM full read',
+          source: sourceName,
+          status: 'Error',
+          message: error instanceof Error ? error.message : 'MATVAR BOM workbook could not be read.',
+        }))
+      }
+    }
+  }
+
+  const matvarOkCount = matvarRows.filter((row) => row.verificationStatus === 'OK').length
+  const matvarNokCount = matvarRows.filter((row) => row.verificationStatus === 'NOK').length
+  const matvarSyntheticCount = matvarRows.filter((row) => row.isSynthetic).length
+
   sourceMappings
-    .filter(({ source }) => source.id !== bomL0Source.id)
+    .filter(({ source }) => source.id !== bomL0Source.id && source.id !== matvarBomEntry?.source.id)
     .forEach(({ source, mapping }) => {
       const mappedColumns = mapping?.columnMappings ?? []
       const sourceName = source.sourceFile?.name ?? source.name
@@ -485,6 +825,10 @@ const buildBomMatvarValidation = async (reviewId) => {
       matchedRows: bomL0Rows.length,
       validPartNumbers: bomL0Rows.filter((row) => row.partNumberValid).length,
       invalidPartNumbers: invalidPartNumberCount,
+      matvarRows: matvarRows.length,
+      matvarOk: matvarOkCount,
+      matvarNok: matvarNokCount,
+      matvarSynthetic: matvarSyntheticCount,
     },
     checks,
     connectedSources: sourceMappings.map(({ source, mapping }) => ({
@@ -496,6 +840,7 @@ const buildBomMatvarValidation = async (reviewId) => {
       mappedColumns: mapping?.columnMappings?.map((columnMapping) => columnMapping.sourceColumn) ?? [],
     })),
     bomL0Rows,
+    matvarRows,
   }
 }
 
@@ -617,6 +962,65 @@ const buildBomMatvarComparison = async (reviewId) => {
       sourceRows: rows.length,
     },
     rules,
+  }
+}
+
+const getComparisonIssueSeverity = (ruleStatus) => {
+  if (ruleStatus === 'Missing') return 'High'
+  if (ruleStatus === 'Fallback') return 'Medium'
+  return 'Low'
+}
+
+const createComparisonIssue = (comparison, rule) => {
+  const isFallback = rule.status === 'Fallback'
+  const titlePrefix = isFallback ? 'Review fallback' : 'Missing expected match'
+  const context = [
+    rule.expected && `expected ${rule.expected}`,
+    rule.result && `result ${rule.result}`,
+    rule.partNumber && `part ${rule.partNumber}`,
+  ].filter(Boolean).join(' | ')
+
+  return {
+    id: `bom-matvar-${comparison.review.id}-${rule.id}`,
+    title: `${titlePrefix}: ${rule.rule}`,
+    area: 'BOM / MATVAR',
+    severity: getComparisonIssueSeverity(rule.status),
+    status: isFallback ? 'In review' : 'Open',
+    source: 'BOM L0',
+    comparedWith: 'BOM Matvar rules',
+    decision: 'None',
+    owner: 'Damian',
+    updated: 'Just now',
+    description: [
+      rule.message,
+      rule.description ? `Matched row: ${rule.description}.` : '',
+      context ? `Rule context: ${context}.` : '',
+    ].filter(Boolean).join(' '),
+    suggestedAction: isFallback
+      ? 'Review the fallback candidate and decide whether it is acceptable for this BOM Matvar review.'
+      : 'Confirm whether this missing BOM Matvar match requires a formal decision before output work continues.',
+  }
+}
+
+const buildBomMatvarReviewIssues = async (reviewId) => {
+  const comparison = await buildBomMatvarComparison(reviewId)
+
+  if (!comparison) return null
+
+  const issueRules = comparison.rules.filter((rule) => rule.status === 'Missing' || rule.status === 'Fallback')
+  const issues = issueRules.map((rule) => createComparisonIssue(comparison, rule))
+
+  return {
+    review: comparison.review,
+    targetId: 'bom-matvar',
+    status: comparison.status,
+    summary: {
+      issues: issues.length,
+      missing: issueRules.filter((rule) => rule.status === 'Missing').length,
+      fallback: issueRules.filter((rule) => rule.status === 'Fallback').length,
+      sourceRules: comparison.rules.length,
+    },
+    issues,
   }
 }
 
@@ -1190,6 +1594,19 @@ export const createRequestHandler = ({ host, port }) => async (request, response
     }
 
     sendJson(response, 200, comparison)
+    return
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/api/reviews/') && url.pathname.endsWith('/bom-matvar/review-issues')) {
+    const reviewId = decodeURIComponent(url.pathname.split('/')[3] ?? '')
+    const reviewIssues = await buildBomMatvarReviewIssues(reviewId)
+
+    if (!reviewIssues) {
+      sendJson(response, 404, { error: 'Review not found' })
+      return
+    }
+
+    sendJson(response, 200, reviewIssues)
     return
   }
 

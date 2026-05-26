@@ -67,6 +67,11 @@ const targetFieldOptions = [
   'Description',
   'Revision',
   'UoM',
+  'Item',
+  'ORACLE Item Description',
+  'INTEL Description',
+  'Phantom L1',
+  'Scope',
 ]
 
 export const MappingStep = forwardRef<MappingStepHandle, MappingStepProps>(function MappingStep({

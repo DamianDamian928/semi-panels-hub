@@ -9,7 +9,8 @@ const isBomMatvarValidationPayload = (value: unknown): value is BomMatvarValidat
     (value as Partial<BomMatvarValidationPayload>).targetId === 'bom-matvar' &&
     (value as Partial<BomMatvarValidationPayload>).review &&
     Array.isArray((value as Partial<BomMatvarValidationPayload>).checks) &&
-    Array.isArray((value as Partial<BomMatvarValidationPayload>).bomL0Rows),
+    Array.isArray((value as Partial<BomMatvarValidationPayload>).bomL0Rows) &&
+    Array.isArray((value as Partial<BomMatvarValidationPayload>).matvarRows),
   )
 
 const loadBomMatvarValidation = async (reviewId: string) => {

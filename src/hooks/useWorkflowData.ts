@@ -173,6 +173,25 @@ export const useWorkflowData = () => {
     setActiveAuditEventId(nextEvent.id)
   }
 
+  const createDecisionRecordFromIssue = (issue: ReviewIssue): DecisionRecord => ({
+    issueId: issue.id,
+    issueTitle: issue.title,
+    area: issue.area,
+    status: 'Required',
+    proposedDecision: issue.suggestedAction,
+    rationale: issue.description,
+    outputImpact: issue.severity === 'High'
+      ? 'Blocks output'
+      : issue.severity === 'Medium'
+        ? 'Affects output'
+        : 'No output impact yet',
+    auditState: 'Not persisted',
+    owner: issue.owner,
+    updated: 'Just now',
+    source: issue.source,
+    comparedWith: issue.comparedWith,
+  })
+
   const registerSourceLocalFile = async (sourceId: string, file: SourceFileMetadata) => {
     try {
       applyBootstrapPayload(await apiRegisterSourceLocalFile(sourceId, file))
@@ -291,8 +310,20 @@ export const useWorkflowData = () => {
       setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
       setIssuePersistenceStates(nextWorkflowState.issuePersistenceStates)
       setWorkflowView(null)
-      setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Action was kept as a local pending change.'))
+      setDecisionRecords((current) =>
+        current.some((record) => record.issueId === issue.id)
+          ? current
+          : [createDecisionRecordFromIssue(issue), ...current])
+
+      const isGeneratedReviewIssue = issue.id.startsWith('bom-matvar-')
+      if (isGeneratedReviewIssue && error instanceof ApiRequestError && error.status === 404) {
+        setApiConnectionState('ready')
+        setApiConnectionError(null)
+      } else {
+        setApiConnectionState(getApiFailureState(error))
+        setApiConnectionError(getApiFailureMessage(error, 'Action was kept as a local pending change.'))
+      }
+
       addLocalAuditEvent(nextWorkflowState.auditEvent)
     }
   }
@@ -313,8 +344,16 @@ export const useWorkflowData = () => {
       setIssueDecisionStates(nextWorkflowState.issueDecisionStates)
       setDecisionPersistenceStates(nextWorkflowState.decisionPersistenceStates)
       setWorkflowView(null)
-      setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Decision was kept as a local pending change.'))
+
+      const isGeneratedReviewIssue = decision.issueId.startsWith('bom-matvar-')
+      if (isGeneratedReviewIssue && error instanceof ApiRequestError && error.status === 404) {
+        setApiConnectionState('ready')
+        setApiConnectionError(null)
+      } else {
+        setApiConnectionState(getApiFailureState(error))
+        setApiConnectionError(getApiFailureMessage(error, 'Decision was kept as a local pending change.'))
+      }
+
       addLocalAuditEvent(nextWorkflowState.auditEvent)
     }
   }
@@ -330,8 +369,14 @@ export const useWorkflowData = () => {
         outputPersistenceStates,
       })
 
-      setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Output preparation could not be confirmed.'))
+      const isGeneratedOutputItem = outputItem.id.startsWith('output-bom-matvar-')
+      if (isGeneratedOutputItem && error instanceof ApiRequestError && error.status === 404) {
+        setApiConnectionState('ready')
+        setApiConnectionError(null)
+      } else {
+        setApiConnectionState(getApiFailureState(error))
+        setApiConnectionError(getApiFailureMessage(error, 'Output preparation could not be confirmed.'))
+      }
 
       if (!nextWorkflowState) return
 

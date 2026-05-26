@@ -129,6 +129,10 @@ export type BomMatvarValidationPayload = {
     matchedRows: number
     validPartNumbers: number
     invalidPartNumbers: number
+    matvarRows: number
+    matvarOk: number
+    matvarNok: number
+    matvarSynthetic: number
   }
   checks: Array<{
     id: string
@@ -152,6 +156,17 @@ export type BomMatvarValidationPayload = {
     updatedAtRaw: string
     updatedAt: string
     partNumberValid: boolean
+  }>
+  matvarRows: Array<{
+    item: string
+    oracleItemDescription: string
+    intelDescription: string
+    phantomL1: string
+    scope: string
+    verificationText: string
+    verificationStatus: 'OK' | 'NOK' | 'None'
+    expectedPhantomL1: string
+    isSynthetic: boolean
   }>
 }
 
@@ -181,6 +196,23 @@ export type BomMatvarComparisonPayload = {
     status: 'OK' | 'Fallback' | 'Missing' | 'Context' | 'Info'
     message: string
   }>
+}
+
+export type BomMatvarReviewIssuesPayload = {
+  review: {
+    id: string
+    item: string
+    intelDescription: string
+  }
+  targetId: 'bom-matvar'
+  status: ValidationState
+  summary: {
+    issues: number
+    missing: number
+    fallback: number
+    sourceRules: number
+  }
+  issues: ReviewIssue[]
 }
 
 export type TechnicalStatus = {
@@ -337,6 +369,9 @@ export const fetchBomMatvarValidation = (reviewId: string) =>
 
 export const fetchBomMatvarComparison = (reviewId: string) =>
   fetchJson<BomMatvarComparisonPayload>(`/api/reviews/${encodeURIComponent(reviewId)}/bom-matvar/comparison`)
+
+export const fetchBomMatvarReviewIssues = (reviewId: string) =>
+  fetchJson<BomMatvarReviewIssuesPayload>(`/api/reviews/${encodeURIComponent(reviewId)}/bom-matvar/review-issues`)
 
 export const apiCreateSource = (source: SourceCreateInput) =>
   postJson<BootstrapResponse>('/api/sources', source)

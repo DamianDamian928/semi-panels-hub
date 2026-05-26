@@ -1501,6 +1501,21 @@ tbody tr:last-child td {
   gap: 8px;
 }
 
+.review-nav-group {
+  display: block;
+  margin: 14px 0 2px;
+  padding: 0 17px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.review-nav-group:first-child {
+  margin-top: 0;
+}
+
 .review-nav-item {
   display: flex;
   align-items: center;
@@ -3283,6 +3298,66 @@ tbody tr:last-child td {
 .source-detail-actions {
   display: grid;
   gap: 10px;
+}
+
+.decision-scope-list {
+  display: grid;
+  gap: 10px;
+}
+
+.decision-scope-row {
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px minmax(96px, auto);
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid rgba(151, 174, 205, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-soft);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.decision-scope-row:hover,
+.decision-scope-row-active {
+  border-color: rgba(132, 200, 255, 0.32);
+  background: rgba(22, 32, 45, 0.72);
+  color: #d8e1ec;
+}
+
+.decision-scope-row-active {
+  box-shadow: inset 2px 0 0 rgba(132, 200, 255, 0.8);
+}
+
+.decision-scope-row strong,
+.decision-scope-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.decision-scope-row strong {
+  color: #d8e1ec;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.decision-scope-row small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.decision-scope-count {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
 }
 
 .source-form {

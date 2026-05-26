@@ -1,8 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useRef, useState } from 'react'
 import type { WorkflowViewPayload } from '../apiClient'
 import type { OutputRow } from '../domain/workflowSelectors'
 import { useBomMatvarComparison } from '../hooks/useBomMatvarComparison'
-import { useReviewImportPreview } from '../hooks/useReviewImportPreview'
+import { useBomMatvarReviewIssues } from '../hooks/useBomMatvarReviewIssues'
 import { useBomMatvarValidation } from '../hooks/useBomMatvarValidation'
 import { useSourceConnections } from '../hooks/useSourceConnections'
 import { useSourceMappings } from '../hooks/useSourceMappings'
@@ -73,38 +73,38 @@ const nextStepByProcess: Record<ProcessStep, { title: string; description: strin
 const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   Sources: {
     eyebrow: 'Sources',
-    title: 'Read-only source registry',
-    summary: 'This screen lists the data sources available to the review without changing source data.',
+    title: 'Global read-only source registry',
+    summary: 'This global screen lists the data sources available to all reviews without changing source data.',
     goal: 'Confirm all expected inputs exist.',
-    function: 'Separates source registration from stage mapping.',
+    function: 'Keeps source registration reusable across dashboard projects.',
     yourRole: 'Check whether the input list is complete.',
     example: 'Fishbowl, Parts&BOM and documentation sources are visible before mapping.',
-    output: 'A source catalog ready for connection.',
+    output: 'A global source catalog ready for connection.',
   },
   Connections: {
     eyebrow: 'Connections',
-    title: 'Source assignment',
-    summary: 'This screen assigns source cards to review stages.',
+    title: 'Global source assignment',
+    summary: 'This global screen assigns source cards to workflow targets used by all reviews.',
     goal: 'Connect the right source set to the right stage.',
-    function: 'Maps global sources into BOM, Documentation and Costing areas.',
+    function: 'Maps global sources into BOM, Documentation and Costing areas before project-specific checks run.',
     yourRole: 'Choose which inputs belong to each stage.',
     example: 'Parts&BOM and Fishbowl can be assigned to BOM stages.',
-    output: 'Stages know which sources they should use.',
+    output: 'Workflow targets know which global sources they should use.',
   },
   Mapping: {
     eyebrow: 'Mapping',
-    title: 'Source field mapping',
-    summary: 'This screen defines how each connected source should be read before validation.',
+    title: 'Global source field mapping',
+    summary: 'This global screen defines how each connected source should be read before project validation.',
     goal: 'Map source structure without cluttering the visual connection map.',
     function: 'Stores role, sheet/table and key column settings per source connection.',
     yourRole: 'Confirm the minimum mapping required for validation.',
     example: 'BOM L1 -> Parts&BOM can use Part Number as the key column.',
-    output: 'Connected sources have readable mapping rules.',
+    output: 'Connected global sources have readable mapping rules.',
   },
   Validation: {
     eyebrow: 'Validation',
-    title: 'Input readiness',
-    summary: 'This screen checks whether connected inputs are ready for downstream workflow steps.',
+    title: 'Current review input readiness',
+    summary: 'This screen checks whether connected inputs are ready for the selected review only.',
     goal: 'Find blocking input problems early.',
     function: 'Separates errors, warnings and unchecked sources.',
     yourRole: 'Decide whether the process can continue.',
@@ -113,18 +113,18 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   },
   Normalization: {
     eyebrow: 'Normalization',
-    title: 'Shared review model',
-    summary: 'This planned screen will shape different source formats into one comparison model.',
+    title: 'Current review model',
+    summary: 'This screen tracks whether connected sources have been shaped into a comparison model for the selected review.',
     goal: 'Reduce format chaos before comparison.',
-    function: 'Maps read-only input data into a shared model.',
-    yourRole: 'Review mapping assumptions when they exist.',
+    function: 'Maps read-only input data into a target-specific normalized review model.',
+    yourRole: 'Review normalization readiness before comparison rules run.',
     example: 'Different column names can become one standard field.',
-    output: 'Data ready for comparison rules.',
+    output: 'A target-level readiness signal for comparison rules.',
   },
   Comparison: {
     eyebrow: 'Comparison',
-    title: 'Difference detection',
-    summary: 'This screen previews how source differences become review-ready issues.',
+    title: 'Current review difference detection',
+    summary: 'This screen previews how source differences become review-ready issues for the selected review.',
     goal: 'Detect meaningful differences.',
     function: 'Groups comparison results and source context.',
     yourRole: 'Look for differences that should become review issues.',
@@ -133,8 +133,8 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   },
   Review: {
     eyebrow: 'Review',
-    title: 'Issue triage',
-    summary: 'This is the main issue triage workspace before decisions are created.',
+    title: 'Current review issue triage',
+    summary: 'This is the main issue triage workspace for the selected review before decisions are created.',
     goal: 'Decide which issues need a formal decision.',
     function: 'Keeps issue detection separate from decisions.',
     yourRole: 'Mark issues for decision or continue reviewing.',
@@ -143,8 +143,8 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   },
   Decisions: {
     eyebrow: 'Decisions',
-    title: 'Auditable decisions',
-    summary: 'This screen manages decision records linked to review issues.',
+    title: 'Current review decisions',
+    summary: 'This screen manages decision records linked to issues from the selected review.',
     goal: 'Keep decisions separate from source data.',
     function: 'Records accepted, drafted, required and deferred decisions.',
     yourRole: 'Accept or draft decisions based on review context.',
@@ -153,8 +153,8 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   },
   Output: {
     eyebrow: 'Output',
-    title: 'Artifact readiness',
-    summary: 'This screen shows which output items can be prepared from accepted decisions.',
+    title: 'Current review artifact readiness',
+    summary: 'This screen shows which output items can be prepared from accepted decisions in the selected review.',
     goal: 'Produce controlled review output.',
     function: 'Links final artifacts to decision and audit state.',
     yourRole: 'Prepare ready output items.',
@@ -219,17 +219,12 @@ export function ReviewEditor({
   reviewIssues,
   decisionRecords,
   outputItems,
-  auditEvents,
   issueDecisionStates,
   issuePersistenceStates,
   decisionStatuses,
   decisionPersistenceStates,
   outputStatuses,
   outputPersistenceStates,
-  activeAuditEventId,
-  setActiveAuditEventId,
-  workflowView,
-  localAuditEvents,
   apiConnectionState,
   apiConnectionError,
   sourceConnectionsByTarget,
@@ -252,13 +247,18 @@ export function ReviewEditor({
   const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
   const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0]?.issueId ?? '')
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
+  const [activeDecisionTargetId, setActiveDecisionTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0]?.id ?? '')
   const [outputFilter, setOutputFilter] = useState<OutputFilter>('All')
+  const [activeOutputTargetId, setActiveOutputTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [stepInfoExpanded, setStepInfoExpanded] = useState(true)
   const [activeValidationTargetId, setActiveValidationTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [validationRefreshKey, setValidationRefreshKey] = useState(0)
+  const [activeNormalizationTargetId, setActiveNormalizationTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [activeComparisonTargetId, setActiveComparisonTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [comparisonRefreshKey, setComparisonRefreshKey] = useState(0)
+  const [activeReviewTargetId, setActiveReviewTargetId] = useState<ConnectionTargetId>('bom-matvar')
+  const [reviewIssuesRefreshKey, setReviewIssuesRefreshKey] = useState(0)
   const [pendingExitNavigation, setPendingExitNavigation] = useState<PendingExitNavigation | null>(null)
   const [exitGuardSaving, setExitGuardSaving] = useState(false)
   const [exitGuardError, setExitGuardError] = useState<string | null>(null)
@@ -311,16 +311,6 @@ export function ReviewEditor({
     saveSourceMappings,
   })
   const {
-    reviewImportPreview,
-    reviewImportError,
-    setReviewImportPreview,
-    setReviewImportError,
-    handleReviewImportFile,
-  } = useReviewImportPreview({
-    setActiveReviewIssueId,
-    setReviewIssueFilter,
-  })
-  const {
     storageStatus,
     storageStatusLoading,
     storageStatusError,
@@ -368,6 +358,17 @@ export function ReviewEditor({
     comparisonRefreshKey,
     validationInputSignature,
   )
+  const {
+    bomMatvarReviewIssues,
+    bomMatvarReviewIssuesLoading,
+    bomMatvarReviewIssuesError,
+    refreshBomMatvarReviewIssues,
+  } = useBomMatvarReviewIssues(
+    selectedReview.id,
+    currentProcessStep === 'Review' || currentProcessStep === 'Decisions' || currentProcessStep === 'Output',
+    reviewIssuesRefreshKey,
+    validationInputSignature,
+  )
   const nextStep = nextStepByProcess[currentProcessStep]
   const purposeContent = stepPurposeContent[currentProcessStep]
   const guardedStepLabel = currentProcessStep === 'Connections' || currentProcessStep === 'Mapping'
@@ -395,6 +396,9 @@ export function ReviewEditor({
     if (navigation.step === 'Comparison') {
       setComparisonRefreshKey((current) => current + 1)
     }
+    if (navigation.step === 'Review') {
+      setReviewIssuesRefreshKey((current) => current + 1)
+    }
 
     setActiveProcessStep(navigation.step)
   }
@@ -406,6 +410,9 @@ export function ReviewEditor({
       }
       if (navigation.step === 'Comparison') {
         setComparisonRefreshKey((current) => current + 1)
+      }
+      if (navigation.step === 'Review') {
+        setReviewIssuesRefreshKey((current) => current + 1)
       }
       return
     }
@@ -523,6 +530,7 @@ export function ReviewEditor({
     const validation = bomMatvarValidation
     const checks = validation?.checks ?? []
     const bomL0Rows = validation?.bomL0Rows ?? []
+    const matvarRows = validation?.matvarRows ?? []
     const activeValidationTarget = connectionTargets.find((target) => target.id === activeValidationTargetId) ?? connectionTargets[0]
     const activeTargetSourceCount = connectionsByTarget[activeValidationTarget.id]?.length ?? 0
     const summary = validation?.summary ?? {
@@ -531,6 +539,10 @@ export function ReviewEditor({
       matchedRows: 0,
       validPartNumbers: 0,
       invalidPartNumbers: 0,
+      matvarRows: 0,
+      matvarOk: 0,
+      matvarNok: 0,
+      matvarSynthetic: 0,
     }
     const validationStatus: ValidationState = validation?.status ?? 'Not checked'
 
@@ -612,12 +624,12 @@ export function ReviewEditor({
               <strong>{summary.mappedSources}</strong>
             </article>
             <article className="source-summary-card">
-              <span>BOM L0 matches</span>
-              <strong>{summary.matchedRows}</strong>
+              <span>MATVAR rows</span>
+              <strong>{summary.matvarRows}</strong>
             </article>
             <article className="source-summary-card">
-              <span>Invalid PN</span>
-              <strong>{summary.invalidPartNumbers}</strong>
+              <span>MATVAR NOK</span>
+              <strong>{summary.matvarNok}</strong>
             </article>
           </div>
 
@@ -660,6 +672,49 @@ export function ReviewEditor({
             <div className="source-registry-empty">
               <strong>No validation data</strong>
               <p>Refresh validation after BOM Matvar sources and mappings are saved.</p>
+            </div>
+          )}
+
+          <p className="source-detail-section-title">MATVAR - Semi Panels List</p>
+          {matvarRows.length ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>ORACLE Item Description</th>
+                    <th>INTEL Description</th>
+                    <th>Phantom L1</th>
+                    <th>Scope</th>
+                    <th>Weryfikacja Matvar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {matvarRows.map((row, index) => (
+                    <tr key={`${row.scope}-${row.item || row.expectedPhantomL1 || index}`}>
+                      <td>{row.item}</td>
+                      <td>{row.oracleItemDescription}</td>
+                      <td>{row.intelDescription}</td>
+                      <td title={row.expectedPhantomL1 ? `Expected: ${row.expectedPhantomL1}` : undefined}>
+                        {row.phantomL1}
+                      </td>
+                      <td>{row.scope}</td>
+                      <td>
+                        {row.verificationText ? (
+                          <span className={validationStateClassName[row.verificationStatus === 'OK' ? 'Valid' : 'Error']}>
+                            {row.verificationText}
+                          </span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="source-registry-empty">
+              <strong>No MATVAR rows</strong>
+              <p>MATVAR rows will appear here when the connected Mass Production mapping reads Semi Panels List rows for this review.</p>
             </div>
           )}
 
@@ -726,6 +781,175 @@ export function ReviewEditor({
                   type="button"
                   className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''}`}
                   onClick={() => setActiveValidationTargetId(target.id)}
+                >
+                  <span className="connection-node-main">
+                    <strong>{target.label}</strong>
+                    <small>{target.group}</small>
+                  </span>
+                  <span className="connection-node-count">{connectedCount}</span>
+                  <span className={validationStateClassName[targetStatus]}>{targetStatus}</span>
+                </button>
+              )
+            })}
+          </div>
+        </aside>
+      </section>
+    )
+  }
+
+  const renderNormalizationStep = () => {
+    const activeNormalizationTarget = connectionTargets.find((target) => target.id === activeNormalizationTargetId) ?? connectionTargets[0]
+    const activeTargetSourceIds = connectionsByTarget[activeNormalizationTarget.id] ?? []
+    const activeTargetSourceCount = activeTargetSourceIds.length
+    const activeTargetMappedCount = activeTargetSourceIds.filter((sourceId) => {
+      const mapping = mappingConfigs[`${activeNormalizationTarget.id}:${sourceId}`]
+      return mapping?.status === 'Ready' && mapping.columnMappings.length > 0
+    }).length
+    const isBomMatvarTarget = activeNormalizationTarget.id === 'bom-matvar'
+    const normalizationStatus: ValidationState = isBomMatvarTarget ? 'Valid' : 'Not checked'
+    const openBlockers = 0
+
+    const getTargetNormalizationStatus = (targetId: ConnectionTargetId): ValidationState =>
+      targetId === 'bom-matvar' ? normalizationStatus : 'Not checked'
+
+    const renderTargetDetails = () => {
+      if (!isBomMatvarTarget) {
+        return (
+          <>
+            <div className="sources-registry-header mapping-header">
+              <div>
+                <p className="section-label">Normalization</p>
+                <h3>{activeNormalizationTarget.label}</h3>
+                <p>{activeNormalizationTarget.description}</p>
+              </div>
+              <div className="sources-registry-actions mapping-registry-actions" aria-label="Normalization actions">
+                <span className={validationStateClassName['Not checked']}>Not checked</span>
+              </div>
+            </div>
+
+            <div className="source-summary-grid" aria-label={`${activeNormalizationTarget.label} normalization summary`}>
+              <article className="source-summary-card">
+                <span>Connected sources</span>
+                <strong>{activeTargetSourceCount}</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Mapped sources</span>
+                <strong>{activeTargetMappedCount}</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Normalized rows</span>
+                <strong>0</strong>
+              </article>
+              <article className="source-summary-card">
+                <span>Open blockers</span>
+                <strong>0</strong>
+              </article>
+            </div>
+
+            <div className="source-registry-empty">
+              <strong>Normalization model is not implemented yet</strong>
+              <p>This target is ready in the Normalization workspace. A target-specific normalized model will be added after its validation and comparison rules are defined.</p>
+            </div>
+          </>
+        )
+      }
+
+      return (
+        <>
+          <div className="sources-registry-header mapping-header">
+            <div>
+              <p className="section-label">Normalization</p>
+              <h3>BOM Matvar normalization</h3>
+              <p>Confirms that BOM Matvar does not require a separate normalization pass before comparison.</p>
+            </div>
+            <div className="sources-registry-actions mapping-registry-actions" aria-label="Normalization actions">
+              <span className={validationStateClassName[normalizationStatus]}>{normalizationStatus}</span>
+            </div>
+          </div>
+
+          <div className="source-summary-grid" aria-label="BOM Matvar normalization summary">
+            <article className="source-summary-card">
+              <span>Connected sources</span>
+              <strong>{activeTargetSourceCount}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Mapped sources</span>
+              <strong>{activeTargetMappedCount}</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Normalized rows</span>
+              <strong>0</strong>
+            </article>
+            <article className="source-summary-card">
+              <span>Open blockers</span>
+              <strong>{openBlockers}</strong>
+            </article>
+          </div>
+
+          <div className="source-registry-empty">
+            <strong>Normalization is not required for BOM Matvar</strong>
+            <p>By workflow decision, BOM Matvar uses the validated BOM L0 context directly in Comparison. Source data remains read-only and there is no normalization blocker for this target.</p>
+          </div>
+
+          <p className="source-detail-section-title">Normalization readiness</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Check</th>
+                  <th>Target</th>
+                  <th>Message</th>
+                  <th>Workflow impact</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span className={validationStateClassName.Valid}>Valid</span></td>
+                  <td>Normalization decision</td>
+                  <td>BOM Matvar</td>
+                  <td>BOM Matvar intentionally skips a dedicated normalization schema.</td>
+                  <td>Comparison uses validated BOM L0 context directly.</td>
+                </tr>
+                <tr>
+                  <td><span className={validationStateClassName.Valid}>Valid</span></td>
+                  <td>Read-only boundary</td>
+                  <td>BOM Matvar</td>
+                  <td>Source data remains read-only before normalization output exists.</td>
+                  <td>Safe to continue workflow without modifying source files.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )
+    }
+
+    return (
+      <section className="sources-registry-grid sources-registry-grid-with-detail mapping-registry-grid validation-workspace-grid">
+        <section className="workspace-main card sources-registry-main mapping-registry-main">
+          {renderTargetDetails()}
+        </section>
+
+        <aside className="workspace-side-panel card source-detail-panel mapping-detail-panel" aria-label="Workflow normalization targets">
+          <div className="sidebar-header">
+            <p className="section-label">Workflow targets</p>
+            <h2>Normalization scope</h2>
+            <p>Select a target to review normalization readiness before comparison.</p>
+          </div>
+
+          <div className="connection-target-list">
+            {connectionTargets.map((target) => {
+              const isActive = target.id === activeNormalizationTarget.id
+              const targetStatus = getTargetNormalizationStatus(target.id)
+              const connectedCount = connectionsByTarget[target.id]?.length ?? 0
+
+              return (
+                <button
+                  key={target.id}
+                  type="button"
+                  className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''}`}
+                  onClick={() => setActiveNormalizationTargetId(target.id)}
                 >
                   <span className="connection-node-main">
                     <strong>{target.label}</strong>
@@ -994,31 +1218,33 @@ export function ReviewEditor({
       )
     }
     if (currentProcessStep === 'Validation') return renderValidationStep()
-    if (currentProcessStep === 'Normalization') {
-      return renderSourceNamesStep('Normalization', 'Normalization workspace', 'This stage will prepare one shared data model from all sources.', 'Waiting')
-    }
+    if (currentProcessStep === 'Normalization') return renderNormalizationStep()
     if (currentProcessStep === 'Comparison') return renderComparisonStep()
     if (currentProcessStep === 'Review') {
+      const reviewIssuesFromComparison = bomMatvarReviewIssues?.issues ?? []
+
       return (
         <ReviewStep
           selectedReview={selectedReview}
-          reviewIssues={reviewIssues}
+          reviewIssues={reviewIssuesFromComparison}
           decisionRecords={decisionRecords}
           issueDecisionStates={issueDecisionStates}
           issuePersistenceStates={issuePersistenceStates}
           decisionStatuses={decisionStatuses}
           decisionPersistenceStates={decisionPersistenceStates}
-          workflowView={workflowView}
           activeReviewIssueId={activeReviewIssueId}
           reviewIssueFilter={reviewIssueFilter}
-          reviewImportPreview={reviewImportPreview}
-          reviewImportError={reviewImportError}
+          activeReviewTargetId={activeReviewTargetId}
+          connectionTargets={connectionTargets}
+          connectionsByTarget={connectionsByTarget}
+          reviewIssueDataLabel="BOM Matvar comparison"
+          reviewIssueLoading={bomMatvarReviewIssuesLoading}
+          reviewIssueError={bomMatvarReviewIssuesError}
           onSelectReviewIssue={setActiveReviewIssueId}
           onSetReviewIssueFilter={setReviewIssueFilter}
-          onSetReviewImportPreview={setReviewImportPreview}
-          onSetReviewImportError={setReviewImportError}
-          onReviewImportFile={(event) => {
-            void handleReviewImportFile(event)
+          onSelectReviewTarget={setActiveReviewTargetId}
+          onRefreshReviewIssues={() => {
+            void refreshBomMatvarReviewIssues()
           }}
           onMarkIssueForDecision={markIssueForDecision}
           onSetActiveDecisionIssue={setActiveDecisionIssueId}
@@ -1031,16 +1257,19 @@ export function ReviewEditor({
       return (
         <DecisionsStep
           selectedReview={selectedReview}
-          reviewIssues={reviewIssues}
+          reviewIssues={bomMatvarReviewIssues?.issues ?? []}
           decisionRecords={decisionRecords}
           issueDecisionStates={issueDecisionStates}
           decisionStatuses={decisionStatuses}
           decisionPersistenceStates={decisionPersistenceStates}
-          workflowView={workflowView}
           activeDecisionIssueId={activeDecisionIssueId}
           decisionFilter={decisionFilter}
+          activeDecisionTargetId={activeDecisionTargetId}
+          connectionTargets={connectionTargets}
+          connectionsByTarget={connectionsByTarget}
           onSelectDecisionIssue={setActiveDecisionIssueId}
           onSelectReviewIssue={setActiveReviewIssueId}
+          onSelectDecisionTarget={setActiveDecisionTargetId}
           onSetDecisionFilter={setDecisionFilter}
           onSetReviewIssueFilter={setReviewIssueFilter}
           onSetProcessStep={requestProcessStepChange}
@@ -1055,20 +1284,18 @@ export function ReviewEditor({
       <OutputStep
         selectedReview={selectedReview}
         decisionRecords={decisionRecords}
-        outputItems={outputItems}
-        auditEvents={auditEvents}
-        localAuditEvents={localAuditEvents}
         issueDecisionStates={issueDecisionStates}
         decisionStatuses={decisionStatuses}
         outputStatuses={outputStatuses}
         outputPersistenceStates={outputPersistenceStates}
-        workflowView={workflowView}
         activeOutputItemId={activeOutputItemId}
         outputFilter={outputFilter}
-        activeAuditEventId={activeAuditEventId}
+        activeOutputTargetId={activeOutputTargetId}
+        connectionTargets={connectionTargets}
+        connectionsByTarget={connectionsByTarget}
         onSelectOutputItem={setActiveOutputItemId}
         onSetOutputFilter={setOutputFilter}
-        onSetActiveAuditEvent={setActiveAuditEventId}
+        onSelectOutputTarget={setActiveOutputTargetId}
         onSetProcessStep={requestProcessStepChange}
         onPrepareOutput={savePreparedOutput}
       />
@@ -1101,17 +1328,20 @@ export function ReviewEditor({
           {sidebarSteps.map(({ step, label, icon }) => {
             const isActive = step === currentProcessStep
             return (
-              <button
-                key={step}
-                type="button"
-                className={`review-nav-item ${isActive ? 'review-nav-item-active' : ''}`}
-                onClick={() => requestProcessStepChange(step)}
-              >
-                <span className="review-nav-icon-wrap" aria-hidden="true">
-                  <SidebarGlyph name={icon} className="review-nav-icon" />
-                </span>
-                <span className="review-nav-label">{label}</span>
-              </button>
+              <Fragment key={step}>
+                {step === 'Sources' ? <span className="review-nav-group">Global setup</span> : null}
+                {step === 'Validation' ? <span className="review-nav-group">Current review</span> : null}
+                <button
+                  type="button"
+                  className={`review-nav-item ${isActive ? 'review-nav-item-active' : ''}`}
+                  onClick={() => requestProcessStepChange(step)}
+                >
+                  <span className="review-nav-icon-wrap" aria-hidden="true">
+                    <SidebarGlyph name={icon} className="review-nav-icon" />
+                  </span>
+                  <span className="review-nav-label">{label}</span>
+                </button>
+              </Fragment>
             )
           })}
         </nav>
@@ -1123,7 +1353,9 @@ export function ReviewEditor({
           <div>
             <p className="eyebrow">Admin project edit</p>
             <h1>{selectedReview.intelModel}</h1>
-            <p className="page-subtitle">Left side = review flow. Right side = current selected screen.</p>
+            <p className="page-subtitle">
+              Sources, Connections and Mapping are global. Validation to Output are scoped to this review.
+            </p>
           </div>
           <div className="header-meta">
             <span className={statusClassName[selectedReview.status]}>{selectedReview.status}</span>
