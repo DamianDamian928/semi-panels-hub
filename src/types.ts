@@ -1,15 +1,13 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
-export type ProcessStep = 'Sources' | 'Connections' | 'Mapping' | 'Validation' | 'Normalization' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
+export type ProcessStep = 'Sources' | 'Connections' | 'Validation' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings' | 'settings-diagnostics' | 'settings-design-template' | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
 export type SidebarIconName =
   | 'sources'
   | 'connections'
-  | 'mapping'
   | 'validation'
-  | 'normalization'
   | 'comparison'
   | 'review'
   | 'decisions'
@@ -124,33 +122,6 @@ export type ConnectionTarget = {
 }
 
 export type SourceConnectionsByTarget = Record<ConnectionTargetId, string[]>
-
-export type SourceConnectionRole = 'Primary' | 'Reference' | 'Validation' | 'Comparison'
-export type SourceMappingStatus = 'Needs mapping' | 'Ready' | 'Error'
-export type SourceMappingTransform = 'None' | 'Trim' | 'Uppercase' | 'Distinct'
-
-export type SourceColumnMapping = {
-  id: string
-  sheetName: string
-  sourceColumn: string
-  targetField: string
-  transform: SourceMappingTransform
-  required: boolean
-}
-
-export type SourceMappingConfig = {
-  id: string
-  targetId: ConnectionTargetId
-  sourceId: string
-  role: SourceConnectionRole
-  sheetName: string
-  keyColumn: string
-  partNumberColumn: string
-  quantityColumn: string
-  revisionColumn: string
-  status: SourceMappingStatus
-  columnMappings: SourceColumnMapping[]
-}
 
 export type ConnectionCard = {
   id: string

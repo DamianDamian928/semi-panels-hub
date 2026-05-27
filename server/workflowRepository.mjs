@@ -221,16 +221,6 @@ const saveSourceConnections = (connectionsByTarget) => {
   }, 0)
 }
 
-const getSourceMappings = () =>
-  getRecord('source_mappings', 'default')?.mappingConfigs ?? {}
-
-const saveSourceMappings = (mappingConfigs) => {
-  upsertRecord('source_mappings', 'default', {
-    mappingConfigs,
-    updatedAt: new Date().toISOString(),
-  }, 0)
-}
-
 const getDashboardSourceReadStatus = () =>
   getRecord('dashboard_source_read_status', 'default') ?? {
     status: 'Not configured',
@@ -307,7 +297,6 @@ const getTechnicalStatus = ({ host, port, packageInfo }) => {
       outputItems: workflowPayload.outputItems.length,
       auditEvents: workflowPayload.auditEvents.length,
       sourceConnections: Object.values(getSourceConnections() ?? {}).reduce((count, sourceIds) => count + sourceIds.length, 0),
-      sourceMappings: Object.keys(getSourceMappings()).length,
     },
     workflow: {
       openIssues: workflowView.review.summary.open,
@@ -345,13 +334,7 @@ const getStorageRecordUpdatedAt = (collection, recordId) => {
 const getStorageStatus = (step) => {
   const sourcesCount = getCollectionCount('sources')
   const sourceConnections = getSourceConnections() ?? {}
-  const sourceMappings = getSourceMappings()
   const sourceConnectionsCount = Object.values(sourceConnections).reduce((count, sourceIds) => count + sourceIds.length, 0)
-  const sourceMappingsCount = Object.keys(sourceMappings).length
-  const sourceMappingColumnsCount = Object.values(sourceMappings).reduce(
-    (count, mapping) => count + (Array.isArray(mapping.columnMappings) ? mapping.columnMappings.length : 0),
-    0,
-  )
 
   const common = {
     step,
@@ -379,15 +362,6 @@ const getStorageStatus = (step) => {
       records: sourceConnectionsCount,
       lastUpdated: getStorageRecordUpdatedAt('source_connections', 'default'),
       detail: 'Target to source links are stored in the backend repository.',
-    },
-    Mapping: {
-      storage: 'SQLite',
-      subject: 'Mapping',
-      persistence: 'Saved after mapping changes',
-      records: sourceMappingsCount,
-      mappedColumns: sourceMappingColumnsCount,
-      lastUpdated: getStorageRecordUpdatedAt('source_mappings', 'default'),
-      detail: 'Preview reads source files read-only; mapping rules are stored separately.',
     },
     Validation: {
       storage: 'SQLite',
@@ -475,8 +449,6 @@ export const workflowRepository = {
   getOutputItem: (outputId) => getRecord('output_items', outputId),
   getSourceConnections,
   saveSourceConnections,
-  getSourceMappings,
-  saveSourceMappings,
   getDashboardSourceReadStatus,
   saveDashboardSourceReadStatus,
   addAuditEvent,
@@ -495,7 +467,6 @@ export const workflowRepository = {
     sources: listRecords('sources'),
     validationStatesBySource: getValidationStates(),
     sourceConnectionsByTarget: getSourceConnections(),
-    sourceMappingConfigs: getSourceMappings(),
     sourceReadStatus: getDashboardSourceReadStatus(),
     ...getWorkflowPayload(),
   }),

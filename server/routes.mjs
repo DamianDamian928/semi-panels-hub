@@ -114,20 +114,6 @@ const isSourceConnectionsPayload = (value) =>
     return Array.isArray(sourceIds) && sourceIds.every((sourceId) => typeof sourceId === 'string')
   })
 
-const isSourceMappingsPayload = (value) =>
-  value &&
-  typeof value === 'object' &&
-  value.mappingConfigs &&
-  typeof value.mappingConfigs === 'object' &&
-  Object.values(value.mappingConfigs).every((mapping) =>
-    mapping &&
-    typeof mapping === 'object' &&
-    typeof mapping.id === 'string' &&
-    connectionTargetIds.has(mapping.targetId) &&
-    typeof mapping.sourceId === 'string' &&
-    Array.isArray(mapping.columnMappings),
-  )
-
 const defaultLocationByType = {
   File: 'Waiting for local file',
   Folder: 'Waiting for folder location',
@@ -149,20 +135,9 @@ const checkedAtLabel = (checkedAt) => checkedAt
 const getSourcePath = (source) => source.sourceFile?.path
 
 const previewableFileExtensions = new Set(['xlsx', 'xlsm'])
-const reviewStatuses = new Set(['Draft', 'In progress', 'Completed'])
-
-const formatSourceReadAt = (date) => {
-  const pad = (value) => String(value).padStart(2, '0')
-
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate()),
-  ].join('-') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
 
 const normalizeDashboardField = (value) => String(value ?? '').trim().toLowerCase()
-const normalizeMappingField = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+const normalizeColumnField = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
 const partNumberPattern = /^\d+-\d+$/
 
 const getDashboardCellByName = (review, fieldName) => {
@@ -183,22 +158,10 @@ const getReviewItem = (review) =>
   review?.id ||
   ''
 
-const getMappingColumnMapping = (mapping, aliases) => {
-  const normalizedAliases = aliases.map(normalizeMappingField)
-  const mappedColumn = mapping?.columnMappings?.find((columnMapping) => {
-    const sourceColumn = normalizeMappingField(columnMapping.sourceColumn)
-    const targetField = normalizeMappingField(columnMapping.targetField)
-    return normalizedAliases.includes(sourceColumn) || normalizedAliases.includes(targetField)
-  })
-
-  return mappedColumn ?? null
+const getColumnByAliases = (columns, aliases) => {
+  const normalizedAliases = aliases.map(normalizeColumnField)
+  return columns.find((column) => normalizedAliases.includes(normalizeColumnField(column))) ?? ''
 }
-
-const getMappingColumn = (mapping, aliases) =>
-  getMappingColumnMapping(mapping, aliases)?.sourceColumn ?? ''
-
-const getMappingSheetName = (mapping) =>
-  mapping?.sheetName || mapping?.columnMappings?.find((columnMapping) => columnMapping.sheetName)?.sheetName || ''
 
 const parseExcelSerialDate = (value) => {
   const serial = Number(String(value ?? '').replace(',', '.'))
@@ -241,58 +204,33 @@ const createValidationCheck = ({ id, label, source = 'BOM Matvar', status, messa
   detail,
 })
 
-const sourceLooksLikeBomL0 = (source, mapping) => {
+const sourceLooksLikeBomL0 = (source) => {
   const sourceText = [
     source?.name,
     source?.sourceFile?.name,
     source?.description,
   ].join(' ').toLowerCase()
 
-  if (sourceText.includes('bom l0') || sourceText.includes('bom_l0')) return true
-
-  const mappedColumns = new Set((mapping?.columnMappings ?? []).map((columnMapping) => normalizeMappingField(columnMapping.sourceColumn)))
-  return (
-    mappedColumns.has(normalizeMappingField('Part Number')) &&
-    mappedColumns.has(normalizeMappingField('Description')) &&
-    mappedColumns.has(normalizeMappingField('Data aktualizacji'))
-  )
+  return sourceText.includes('bom l0') || sourceText.includes('bom_l0')
 }
 
-const sourceLooksLikeMatvarBom = (source, mapping) => {
+const sourceLooksLikeMatvarBom = (source) => {
   const sourceText = [
     source?.name,
     source?.sourceFile?.name,
     source?.description,
   ].join(' ').toLowerCase()
-
-  const mappedColumns = new Set((mapping?.columnMappings ?? []).map((columnMapping) => normalizeMappingField(columnMapping.sourceColumn)))
-  const mappedTargets = new Set((mapping?.columnMappings ?? []).map((columnMapping) => normalizeMappingField(columnMapping.targetField)))
-  const hasMappedField = (aliases) => aliases.some((alias) => {
-    const normalized = normalizeMappingField(alias)
-    return mappedColumns.has(normalized) || mappedTargets.has(normalized)
-  })
-
-  if (
-    hasMappedField(['Item']) &&
-    hasMappedField(['ORACLE Item Description', 'ORACLE Item Desc', 'ORACLE Description']) &&
-    hasMappedField(['INTEL Description', 'INTEL Description (C)', 'Intel Description']) &&
-    hasMappedField(['Phantom L1', 'PHANTOM L1', 'PhantomL1']) &&
-    hasMappedField(['Scope', 'SCOPE'])
-  ) {
-    return true
-  }
 
   return sourceText.includes('matvar') || sourceText.includes('mass production')
 }
 
-const mapWorksheetRow = (row, columnIndexByName, mappingByField) =>
-  Object.fromEntries(Object.entries(mappingByField).map(([field, columnMapping]) => {
-    if (!columnMapping) return [field, '']
-    const value = row[columnIndexByName[columnMapping.sourceColumn]]
-    return [field, applyMappingTransform(value, columnMapping.transform)]
-  }))
+const readContractRow = (row, columnIndexByName, contractColumns) =>
+  Object.fromEntries(Object.entries(contractColumns).map(([field, column]) => [
+    field,
+    String(row[columnIndexByName[column]] ?? '').trim(),
+  ]))
 
-const normalizeMatvarMappedRow = (row) => {
+const normalizeMatvarContractRow = (row) => {
   const phantomL1 = String(row.phantomL1 ?? '').trim()
   const scope = String(row.scope ?? '').trim()
 
@@ -399,6 +337,9 @@ const buildMatvarRowsView = ({ matvarRows, matvarTargets }) => {
     if (!scopeKey || existingByScope.has(scopeKey)) return
 
     existingByScope.set(scopeKey, {
+      sourceName: row.sourceName,
+      sourcePath: row.sourcePath,
+      sourceSheet: row.sourceSheet,
       item: row.item,
       oracleItemDescription: row.oracleItemDescription,
       intelDescription: row.intelDescription,
@@ -417,6 +358,9 @@ const buildMatvarRowsView = ({ matvarRows, matvarTargets }) => {
 
     if (targetScope === 'Full Scope') {
       return base ?? {
+        sourceName: '',
+        sourcePath: '',
+        sourceSheet: '',
         item: '',
         oracleItemDescription: '',
         intelDescription: '',
@@ -432,6 +376,9 @@ const buildMatvarRowsView = ({ matvarRows, matvarTargets }) => {
     const expectedPhantomL1 = matvarTargets.expected[targetScope] ?? ''
     if (!base) {
       return {
+        sourceName: '',
+        sourcePath: '',
+        sourceSheet: '',
         item: '',
         oracleItemDescription: '',
         intelDescription: '',
@@ -471,13 +418,40 @@ const buildBomMatvarValidation = async (reviewId) => {
   }
 
   const connectionsByTarget = workflowRepository.getSourceConnections() ?? {}
-  const mappingConfigs = workflowRepository.getSourceMappings()
   const connectedSourceIds = connectionsByTarget['bom-matvar'] ?? []
   const connectedSources = connectedSourceIds
     .map((sourceId) => workflowRepository.getSource(sourceId))
     .filter(Boolean)
+  const connectedSourceEntries = connectedSources.map((source) => ({
+    source,
+    contractRole: sourceLooksLikeBomL0(source)
+      ? 'BOM L0'
+      : sourceLooksLikeMatvarBom(source)
+        ? 'Mass Production'
+        : 'Additional source',
+  }))
   const checks = []
   const intelDescription = getReviewIntelDescription(review).trim()
+  const buildConnectedSourceRows = () => connectedSourceEntries.map(({ source, contractRole }) => ({
+    id: source.id,
+    name: source.sourceFile?.name ?? source.name,
+    status: source.status,
+    contractRole,
+  }))
+  const buildSummary = ({ bomL0Rows = [], matvarRows = [] } = {}) => {
+    const invalidPartNumberCount = bomL0Rows.filter((row) => !row.partNumberValid).length
+    return {
+      connectedSources: connectedSources.length,
+      contractSources: connectedSourceEntries.filter((entry) => ['BOM L0', 'Mass Production'].includes(entry.contractRole)).length,
+      matchedRows: bomL0Rows.length,
+      validPartNumbers: bomL0Rows.filter((row) => row.partNumberValid).length,
+      invalidPartNumbers: invalidPartNumberCount,
+      matvarRows: matvarRows.length,
+      matvarOk: matvarRows.filter((row) => row.verificationStatus === 'OK').length,
+      matvarNok: matvarRows.filter((row) => row.verificationStatus === 'NOK').length,
+      matvarSynthetic: matvarRows.filter((row) => row.isSynthetic).length,
+    }
+  }
 
   checks.push(createValidationCheck({
     id: 'review-intel-description',
@@ -499,12 +473,8 @@ const buildBomMatvarValidation = async (reviewId) => {
       : 'No sources are connected to BOM Matvar.',
   }))
 
-  const sourceMappings = connectedSources.map((source) => ({
-    source,
-    mapping: mappingConfigs[`bom-matvar:${source.id}`] ?? null,
-  }))
-  const bomL0Entry = sourceMappings.find(({ source, mapping }) => sourceLooksLikeBomL0(source, mapping))
-  const matvarBomEntry = sourceMappings.find(({ source, mapping }) => !sourceLooksLikeBomL0(source, mapping) && sourceLooksLikeMatvarBom(source, mapping))
+  const bomL0Entry = connectedSourceEntries.find((entry) => entry.contractRole === 'BOM L0')
+  const matvarBomEntry = connectedSourceEntries.find((entry) => entry.contractRole === 'Mass Production')
 
   if (!bomL0Entry) {
     checks.push(createValidationCheck({
@@ -522,110 +492,73 @@ const buildBomMatvarValidation = async (reviewId) => {
       },
       targetId: 'bom-matvar',
       status: getValidationStatus(checks),
-      summary: {
-        connectedSources: connectedSources.length,
-        mappedSources: sourceMappings.filter(({ mapping }) => mapping).length,
-        matchedRows: 0,
-        validPartNumbers: 0,
-        invalidPartNumbers: 0,
-        matvarRows: 0,
-        matvarOk: 0,
-        matvarNok: 0,
-        matvarSynthetic: 0,
-      },
+      summary: buildSummary(),
       checks,
-      connectedSources: sourceMappings.map(({ source, mapping }) => ({
-        id: source.id,
-        name: source.sourceFile?.name ?? source.name,
-        status: source.status,
-        role: mapping?.role ?? 'Not mapped',
-        mappingStatus: mapping?.status ?? 'Missing',
-        mappedColumns: mapping?.columnMappings?.map((columnMapping) => columnMapping.sourceColumn) ?? [],
-      })),
+      connectedSources: buildConnectedSourceRows(),
       bomL0Rows: [],
       matvarRows: [],
     }
   }
 
-  const { source: bomL0Source, mapping: bomL0Mapping } = bomL0Entry
+  const { source: bomL0Source } = bomL0Entry
+  const bomL0SourceName = bomL0Source.sourceFile?.name ?? bomL0Source.name
+  const bomL0SourcePath = bomL0Source.sourceFile?.path ?? bomL0Source.location
 
   checks.push(createValidationCheck({
     id: 'bom-l0-source',
     label: 'BOM L0 source',
-    source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
+    source: bomL0SourceName,
     status: bomL0Source.status === 'Ready' ? 'Valid' : 'Error',
     message: bomL0Source.status === 'Ready'
       ? 'BOM L0 source is connected and ready.'
       : `BOM L0 source status is ${bomL0Source.status}.`,
-    detail: bomL0Source.sourceFile?.path ?? bomL0Source.location,
-  }))
-
-  if (!bomL0Mapping) {
-    checks.push(createValidationCheck({
-      id: 'bom-l0-mapping',
-      label: 'BOM L0 mapping',
-      source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
-      status: 'Error',
-      message: 'BOM L0 source is connected but not mapped.',
-    }))
-  }
-
-  const partNumberColumn = getMappingColumn(bomL0Mapping, ['Part Number', 'PartNumber', 'Part_No', 'BOM L0 Part Number'])
-  const descriptionColumn = getMappingColumn(bomL0Mapping, ['Description', 'BOM L0 Description'])
-  const updatedAtColumn = getMappingColumn(bomL0Mapping, ['Data aktualizacji', 'Update Date', 'BOM L0 Data aktualizacji'])
-  const requiredColumns = [
-    { key: 'partNumber', label: 'Part Number', column: partNumberColumn },
-    { key: 'description', label: 'Description', column: descriptionColumn },
-    { key: 'updatedAt', label: 'Data aktualizacji', column: updatedAtColumn },
-  ]
-  const missingMappedColumns = requiredColumns.filter((column) => !column.column)
-
-  checks.push(createValidationCheck({
-    id: 'bom-l0-mapping',
-    label: 'BOM L0 required mapping',
-    source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
-    status: missingMappedColumns.length ? 'Error' : 'Valid',
-    message: missingMappedColumns.length
-      ? `Missing mapped column(s): ${missingMappedColumns.map((column) => column.label).join(', ')}.`
-      : 'Required BOM L0 columns are mapped.',
-    detail: requiredColumns.map((column) => `${column.label}: ${column.column || 'missing'}`).join(' | '),
+    detail: bomL0SourcePath,
   }))
 
   let bomL0Rows = []
 
-  if (!missingMappedColumns.length && bomL0Source.sourceFile?.path) {
+  if (bomL0Source.sourceFile?.path) {
     try {
-      const worksheet = await readExcelWorksheet(bomL0Source.sourceFile.path, {
-        sheetName: bomL0Mapping?.sheetName || bomL0Mapping?.columnMappings?.[0]?.sheetName,
-      })
+      const worksheet = await readExcelWorksheet(bomL0Source.sourceFile.path)
       const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
-      const missingWorksheetColumns = requiredColumns.filter((column) => !(column.column in columnIndexByName))
+      const contractColumns = {
+        partNumber: getColumnByAliases(worksheet.columns, ['Part Number', 'PartNumber', 'Part_No', 'BOM L0 Part Number']),
+        description: getColumnByAliases(worksheet.columns, ['Description', 'BOM L0 Description']),
+        updatedAt: getColumnByAliases(worksheet.columns, ['Data aktualizacji', 'Update Date', 'BOM L0 Data aktualizacji']),
+      }
+      const requiredColumns = [
+        { key: 'partNumber', label: 'Part Number', column: contractColumns.partNumber },
+        { key: 'description', label: 'Description', column: contractColumns.description },
+        { key: 'updatedAt', label: 'Data aktualizacji', column: contractColumns.updatedAt },
+      ]
+      const missingWorksheetColumns = requiredColumns.filter((column) => !column.column || !(column.column in columnIndexByName))
 
       checks.push(createValidationCheck({
         id: 'bom-l0-worksheet-columns',
-        label: 'BOM L0 worksheet columns',
-        source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
+        label: 'BOM L0 source contract',
+        source: bomL0SourceName,
         status: missingWorksheetColumns.length ? 'Error' : 'Valid',
         message: missingWorksheetColumns.length
-          ? `Mapped column(s) not found in workbook: ${missingWorksheetColumns.map((column) => column.column).join(', ')}.`
-          : `Workbook sheet "${worksheet.activeSheetName}" contains all mapped columns.`,
-        detail: `${worksheet.rows.length} row(s) read with full worksheet reader.`,
+          ? `Required column(s) not found in workbook: ${missingWorksheetColumns.map((column) => column.label).join(', ')}.`
+          : `Workbook sheet "${worksheet.activeSheetName}" contains the BOM L0 contract columns.`,
+        detail: requiredColumns.map((column) => `${column.label}: ${column.column || 'missing'}`).join(' | '),
       }))
 
       if (!missingWorksheetColumns.length && intelDescription) {
         bomL0Rows = worksheet.rows
-          .filter((row) => String(row[columnIndexByName[descriptionColumn]] ?? '').includes(intelDescription))
+          .filter((row) => String(row[columnIndexByName[contractColumns.description]] ?? '').includes(intelDescription))
           .map((row) => {
-            const partNumber = String(row[columnIndexByName[partNumberColumn]] ?? '').trim()
-            const description = String(row[columnIndexByName[descriptionColumn]] ?? '').trim()
-            const updatedAtRaw = String(row[columnIndexByName[updatedAtColumn]] ?? '').trim()
+            const contractRow = readContractRow(row, columnIndexByName, contractColumns)
 
             return {
-              partNumber,
-              description,
-              updatedAtRaw,
-              updatedAt: formatSourceDate(updatedAtRaw),
-              partNumberValid: partNumberPattern.test(partNumber),
+              sourceName: bomL0SourceName,
+              sourcePath: bomL0SourcePath,
+              sourceSheet: worksheet.activeSheetName,
+              partNumber: contractRow.partNumber,
+              description: contractRow.description,
+              updatedAtRaw: contractRow.updatedAt,
+              updatedAt: formatSourceDate(contractRow.updatedAt),
+              partNumberValid: partNumberPattern.test(contractRow.partNumber),
             }
           })
           .sort((left, right) => left.description.localeCompare(right.description, undefined, {
@@ -637,7 +570,7 @@ const buildBomMatvarValidation = async (reviewId) => {
       checks.push(createValidationCheck({
         id: 'bom-l0-read',
         label: 'BOM L0 full read',
-        source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
+        source: bomL0SourceName,
         status: 'Error',
         message: error instanceof Error ? error.message : 'BOM L0 workbook could not be read.',
       }))
@@ -649,7 +582,7 @@ const buildBomMatvarValidation = async (reviewId) => {
   checks.push(createValidationCheck({
     id: 'bom-l0-intel-description-match',
     label: 'Intel Description match',
-    source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
+    source: bomL0SourceName,
     status: bomL0Rows.length ? 'Valid' : 'Error',
     message: bomL0Rows.length
       ? `${bomL0Rows.length} BOM L0 row(s) match "${intelDescription}".`
@@ -659,7 +592,7 @@ const buildBomMatvarValidation = async (reviewId) => {
   checks.push(createValidationCheck({
     id: 'bom-l0-part-number-format',
     label: 'Part Number format',
-    source: bomL0Source.sourceFile?.name ?? bomL0Source.name,
+    source: bomL0SourceName,
     status: invalidPartNumberCount ? 'Warning' : bomL0Rows.length ? 'Valid' : 'Warning',
     message: invalidPartNumberCount
       ? `${invalidPartNumberCount} matched row(s) have invalid Part Number format.`
@@ -675,25 +608,13 @@ const buildBomMatvarValidation = async (reviewId) => {
       id: 'matvar-bom-source',
       label: 'MATVAR BOM source',
       status: 'Error',
-      message: 'MATVAR BOM source is not connected to BOM Matvar or does not have MATVAR columns mapped.',
-      detail: 'Required mapping: Item | ORACLE Item Description | INTEL Description | Phantom L1 | Scope',
+      message: 'Mass Production source is not connected to BOM Matvar.',
+      detail: 'Required source contract: sheet "Semi Panels List" with Item, ORACLE Item Description, INTEL Description, Tool/Phantom L1 and Scope.',
     }))
   } else {
-    const { source: matvarSource, mapping: matvarMapping } = matvarBomEntry
+    const { source: matvarSource } = matvarBomEntry
     const sourceName = matvarSource.sourceFile?.name ?? matvarSource.name
-    const itemMapping = getMappingColumnMapping(matvarMapping, ['Item'])
-    const oracleDescriptionMapping = getMappingColumnMapping(matvarMapping, ['ORACLE Item Description', 'ORACLE Item Desc', 'ORACLE Description'])
-    const intelDescriptionMapping = getMappingColumnMapping(matvarMapping, ['INTEL Description', 'INTEL Description (C)', 'Intel Description'])
-    const phantomL1Mapping = getMappingColumnMapping(matvarMapping, ['Phantom L1', 'PHANTOM L1', 'PhantomL1'])
-    const scopeMapping = getMappingColumnMapping(matvarMapping, ['Scope', 'SCOPE'])
-    const requiredMatvarColumns = [
-      { key: 'item', label: 'Item', mapping: itemMapping },
-      { key: 'oracleItemDescription', label: 'ORACLE Item Description', mapping: oracleDescriptionMapping },
-      { key: 'intelDescription', label: 'INTEL Description', mapping: intelDescriptionMapping },
-      { key: 'phantomL1', label: 'Phantom L1', mapping: phantomL1Mapping },
-      { key: 'scope', label: 'Scope', mapping: scopeMapping },
-    ]
-    const missingMatvarMappings = requiredMatvarColumns.filter((column) => !column.mapping)
+    const sourcePath = matvarSource.sourceFile?.path ?? matvarSource.location
 
     checks.push(createValidationCheck({
       id: 'matvar-bom-source',
@@ -703,59 +624,52 @@ const buildBomMatvarValidation = async (reviewId) => {
       message: matvarSource.status === 'Ready'
         ? 'MATVAR BOM source is connected and ready.'
         : `MATVAR BOM source status is ${matvarSource.status}.`,
-      detail: matvarSource.sourceFile?.path ?? matvarSource.location,
+      detail: sourcePath,
     }))
 
-    checks.push(createValidationCheck({
-      id: 'matvar-bom-mapping',
-      label: 'MATVAR BOM required mapping',
-      source: sourceName,
-      status: missingMatvarMappings.length
-        ? 'Error'
-        : matvarMapping?.status === 'Ready'
-          ? 'Valid'
-          : 'Warning',
-      message: missingMatvarMappings.length
-        ? `Missing mapped column(s): ${missingMatvarMappings.map((column) => column.label).join(', ')}.`
-        : matvarMapping?.status === 'Ready'
-          ? 'Required MATVAR BOM columns are mapped.'
-          : 'Required MATVAR BOM columns are selected, but mapping is not marked Ready. Validation will read the selected columns.',
-      detail: requiredMatvarColumns
-        .map((column) => `${column.label}: ${column.mapping?.sheetName ?? 'missing'}/${column.mapping?.sourceColumn ?? 'missing'}`)
-        .join(' | '),
-    }))
-
-    if (!missingMatvarMappings.length && matvarSource.sourceFile?.path) {
+    if (matvarSource.sourceFile?.path) {
       try {
         const worksheet = await readExcelWorksheet(matvarSource.sourceFile.path, {
-          sheetName: getMappingSheetName(matvarMapping),
+          sheetName: 'Semi Panels List',
         })
         const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
-        const missingWorksheetColumns = requiredMatvarColumns.filter((column) => !(column.mapping.sourceColumn in columnIndexByName))
+        const contractColumns = {
+          item: getColumnByAliases(worksheet.columns, ['Item']),
+          oracleItemDescription: getColumnByAliases(worksheet.columns, ['ORACLE Item Description', 'ORACLE Item Desc', 'ORACLE Description']),
+          intelDescription: getColumnByAliases(worksheet.columns, ['INTEL Description', 'INTEL Description (C)', 'Intel Description']),
+          phantomL1: getColumnByAliases(worksheet.columns, ['Tool', 'Tool ID', 'Phantom L1', 'PHANTOM L1', 'PhantomL1']),
+          scope: getColumnByAliases(worksheet.columns, ['Scope', 'SCOPE']),
+        }
+        const requiredMatvarColumns = [
+          { key: 'item', label: 'Item', column: contractColumns.item },
+          { key: 'oracleItemDescription', label: 'ORACLE Item Description', column: contractColumns.oracleItemDescription },
+          { key: 'intelDescription', label: 'INTEL Description', column: contractColumns.intelDescription },
+          { key: 'phantomL1', label: 'Phantom L1', column: contractColumns.phantomL1 },
+          { key: 'scope', label: 'Scope', column: contractColumns.scope },
+        ]
+        const missingWorksheetColumns = requiredMatvarColumns.filter((column) => !column.column || !(column.column in columnIndexByName))
 
         checks.push(createValidationCheck({
           id: 'matvar-bom-worksheet-columns',
-          label: 'MATVAR BOM worksheet columns',
+          label: 'MATVAR BOM source contract',
           source: sourceName,
           status: missingWorksheetColumns.length ? 'Error' : 'Valid',
           message: missingWorksheetColumns.length
-            ? `Mapped column(s) not found in workbook: ${missingWorksheetColumns.map((column) => column.mapping.sourceColumn).join(', ')}.`
-            : `Workbook sheet "${worksheet.activeSheetName}" contains all mapped MATVAR columns.`,
-          detail: `${worksheet.rows.length} row(s) read with full worksheet reader.`,
+            ? `Required column(s) not found in workbook: ${missingWorksheetColumns.map((column) => column.label).join(', ')}.`
+            : `Workbook sheet "${worksheet.activeSheetName}" contains the MATVAR contract columns.`,
+          detail: requiredMatvarColumns.map((column) => `${column.label}: ${column.column || 'missing'}`).join(' | '),
         }))
 
         if (!missingWorksheetColumns.length && intelDescription) {
-          const mappingByField = {
-            item: itemMapping,
-            oracleItemDescription: oracleDescriptionMapping,
-            intelDescription: intelDescriptionMapping,
-            phantomL1: phantomL1Mapping,
-            scope: scopeMapping,
-          }
-
           const filteredMatvarRows = worksheet.rows
-            .map((row) => mapWorksheetRow(row, columnIndexByName, mappingByField))
-            .map(normalizeMatvarMappedRow)
+            .map((row) => readContractRow(row, columnIndexByName, contractColumns))
+            .map((row) => ({
+              ...row,
+              sourceName,
+              sourcePath,
+              sourceSheet: worksheet.activeSheetName,
+            }))
+            .map(normalizeMatvarContractRow)
             .filter((row) => String(row.intelDescription ?? '').includes(intelDescription))
 
           const matvarTargets = computeMatvarTargets(computeBomL0Area2Rows(bomL0Rows))
@@ -791,23 +705,18 @@ const buildBomMatvarValidation = async (reviewId) => {
   const matvarNokCount = matvarRows.filter((row) => row.verificationStatus === 'NOK').length
   const matvarSyntheticCount = matvarRows.filter((row) => row.isSynthetic).length
 
-  sourceMappings
+  connectedSourceEntries
     .filter(({ source }) => source.id !== bomL0Source.id && source.id !== matvarBomEntry?.source.id)
-    .forEach(({ source, mapping }) => {
-      const mappedColumns = mapping?.columnMappings ?? []
+    .forEach(({ source, contractRole }) => {
       const sourceName = source.sourceFile?.name ?? source.name
 
       checks.push(createValidationCheck({
         id: `bom-matvar-extra-source-${source.id}`,
         label: 'Additional BOM Matvar source',
         source: sourceName,
-        status: !mapping || mapping.status !== 'Ready' || mappedColumns.length === 0 ? 'Warning' : 'Valid',
-        message: !mapping
-          ? 'Source is connected to BOM Matvar but has no mapping yet.'
-          : mapping.status !== 'Ready'
-            ? `Source mapping status is ${mapping.status}.`
-            : `${mappedColumns.length} column(s) mapped for this source.`,
-        detail: mappedColumns.map((columnMapping) => `${columnMapping.sheetName}/${columnMapping.sourceColumn}`).join(' | '),
+        status: 'Warning',
+        message: 'Source is connected to BOM Matvar but is not used by the current MATVAR validation contract.',
+        detail: contractRole,
       }))
     })
 
@@ -821,7 +730,7 @@ const buildBomMatvarValidation = async (reviewId) => {
     status: getValidationStatus(checks),
     summary: {
       connectedSources: connectedSources.length,
-      mappedSources: sourceMappings.filter(({ mapping }) => mapping).length,
+      contractSources: connectedSourceEntries.filter((entry) => ['BOM L0', 'Mass Production'].includes(entry.contractRole)).length,
       matchedRows: bomL0Rows.length,
       validPartNumbers: bomL0Rows.filter((row) => row.partNumberValid).length,
       invalidPartNumbers: invalidPartNumberCount,
@@ -831,14 +740,7 @@ const buildBomMatvarValidation = async (reviewId) => {
       matvarSynthetic: matvarSyntheticCount,
     },
     checks,
-    connectedSources: sourceMappings.map(({ source, mapping }) => ({
-      id: source.id,
-      name: source.sourceFile?.name ?? source.name,
-      status: source.status,
-      role: mapping?.role ?? 'Not mapped',
-      mappingStatus: mapping?.status ?? 'Missing',
-      mappedColumns: mapping?.columnMappings?.map((columnMapping) => columnMapping.sourceColumn) ?? [],
-    })),
+    connectedSources: buildConnectedSourceRows(),
     bomL0Rows,
     matvarRows,
   }
@@ -868,12 +770,69 @@ const createComparisonRule = ({
   message,
 })
 
+const getMatvarRuleBasis = (row, reviewIntelDescription) => {
+  const scope = String(row.scope ?? '').trim()
+  const expected = row.expectedPhantomL1 || ''
+  const actual = row.phantomL1 || 'missing'
+
+  if (scope === 'Full Scope') {
+    return `Must contain a Full Scope row for INTEL Description "${reviewIntelDescription}". Phantom L1 is not compared for Full Scope.`
+  }
+
+  if (scope === 'Control Scope') {
+    return `Scope = Control Scope must have Phantom L1 equal to BOM L0 Controller Scope EU-10 Part Number (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+  }
+
+  if (scope === 'Heat Scope') {
+    return `Scope = Heat Scope must have Phantom L1 equal to BOM L0 Heat Scope US-20 Part Number (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+  }
+
+  if (scope === 'N2 Heat') {
+    return `Scope = N2 Heat must have Phantom L1 equal to BOM L0 N2 Heat 30 Part Number (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+  }
+
+  return `Scope = ${scope || 'missing'} must match the expected Phantom L1 from the corresponding BOM L0 scope row (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+}
+
+const createMatvarComparisonRule = (row, index, reviewIntelDescription) => {
+  const status = row.verificationStatus === 'OK'
+    ? 'OK'
+    : row.verificationStatus === 'NOK'
+      ? row.isSynthetic ? 'Missing' : 'Mismatch'
+      : 'Context'
+  const result = row.verificationStatus === 'OK'
+    ? 'Matched'
+    : row.verificationStatus === 'NOK'
+      ? row.isSynthetic ? 'Missing' : 'Mismatch'
+      : 'Found'
+  const expected = row.expectedPhantomL1 || (row.scope === 'Full Scope' ? 'Any' : 'Phantom L1')
+
+  return {
+    id: `matvar-${String(row.scope || index).toLowerCase().replace(/\s+/g, '-')}`,
+    rule: row.scope || 'MATVAR row',
+    expected,
+    result,
+    sourceName: row.sourceName,
+    sourcePath: row.sourcePath,
+    sourceSheet: row.sourceSheet,
+    item: row.item,
+    oracleItemDescription: row.oracleItemDescription,
+    intelDescription: row.intelDescription,
+    phantomL1: row.phantomL1,
+    scope: row.scope,
+    verificationText: row.verificationText,
+    status,
+    message: getMatvarRuleBasis(row, reviewIntelDescription),
+  }
+}
+
 const buildBomMatvarComparison = async (reviewId) => {
   const validation = await buildBomMatvarValidation(reviewId)
 
   if (!validation) return null
 
   const rows = validation.bomL0Rows ?? []
+  const matvarRows = validation.matvarRows ?? []
   const controllerEu10 = findBomL0Row(rows, (description) =>
     description.includes('controller scope') &&
     description.includes('eu') &&
@@ -962,6 +921,7 @@ const buildBomMatvarComparison = async (reviewId) => {
       sourceRows: rows.length,
     },
     rules,
+    matvarRules: matvarRows.map((row, index) => createMatvarComparisonRule(row, index, validation.review.intelDescription)),
   }
 }
 
@@ -1024,221 +984,7 @@ const buildBomMatvarReviewIssues = async (reviewId) => {
   }
 }
 
-const applyMappingTransform = (value, transform) => {
-  const text = String(value ?? '')
-
-  if (transform === 'Uppercase') return text.trim().toUpperCase()
-  if (transform === 'Trim' || transform === 'Distinct') return text.trim()
-  return text
-}
-
-const makeUniqueColumnLabel = (label, usedLabels) => {
-  let nextLabel = label
-  let index = 2
-
-  while (usedLabels.has(nextLabel)) {
-    nextLabel = `${label} ${index}`
-    index += 1
-  }
-
-  usedLabels.add(nextLabel)
-  return nextLabel
-}
-
-const buildDashboardRowsFromMapping = (mapping, preview) => {
-  const selectedMappings = mapping.columnMappings.filter((columnMapping) => columnMapping.sheetName === preview.activeSheetName)
-  const columnEntries = []
-  const usedLabels = new Set()
-
-  selectedMappings.forEach((columnMapping) => {
-    const columnIndex = preview.columns.indexOf(columnMapping.sourceColumn)
-    if (columnIndex < 0) return
-
-    const preferredLabel = columnMapping.targetField?.trim() || columnMapping.sourceColumn
-    columnEntries.push({
-      ...columnMapping,
-      columnIndex,
-      label: makeUniqueColumnLabel(preferredLabel, usedLabels),
-      normalizedTargetField: normalizeDashboardField(columnMapping.targetField),
-    })
-  })
-
-  if (columnEntries.length === 0) {
-    throw new Error('Selected mapping columns were not found in the source preview.')
-  }
-
-  const dashboardColumns = columnEntries.map((entry) => entry.label)
-  const today = new Date().toISOString().slice(0, 10)
-
-  return preview.rows
-    .map((row, rowIndex) => {
-      const cells = Object.fromEntries(
-        columnEntries.map((entry) => [
-          entry.label,
-          applyMappingTransform(row[entry.columnIndex], entry.transform),
-        ]),
-      )
-      const getByTargetField = (fieldName) => {
-        const entry = columnEntries.find((candidate) => candidate.normalizedTargetField === normalizeDashboardField(fieldName))
-        return entry ? cells[entry.label] : ''
-      }
-      const intelModel = getByTargetField('Intel Model Number') || Object.values(cells).find((value) => value.trim()) || `Dashboard row ${rowIndex + 1}`
-      const status = getByTargetField('Status')
-
-      return {
-        id: `dashboard-${mapping.sourceId}-${rowIndex + 1}`,
-        intelModel,
-        status: reviewStatuses.has(status) ? status : 'Draft',
-        owner: getByTargetField('Owner') || 'Unassigned',
-        lastUpdated: getByTargetField('Last Updated') || today,
-        dashboardColumns,
-        dashboardCells: cells,
-      }
-    })
-    .filter((row) => Object.values(row.dashboardCells).some((value) => value.trim()))
-}
-
-const isDashboardMappingReady = (mapping) =>
-  mapping &&
-  mapping.targetId === 'dashboard' &&
-  typeof mapping.sourceId === 'string' &&
-  Array.isArray(mapping.columnMappings) &&
-  mapping.columnMappings.length > 0
-
-const validateDashboardSource = async (source) => {
-  const sourcePath = getSourcePath(source)
-  const extension = source?.sourceFile?.extension?.toLowerCase()
-
-  if (!sourcePath || !extension) {
-    throw new Error('This source does not have a local file registered.')
-  }
-
-  if (!previewableFileExtensions.has(extension)) {
-    throw new Error('Applying this mapping is currently available for .xlsx and .xlsm files.')
-  }
-
-  const fileStats = await stat(sourcePath)
-  await access(sourcePath, constants.R_OK)
-
-  return {
-    sourcePath,
-    fileStats,
-  }
-}
-
-const rebuildDashboardFromMapping = async (mapping, mappingConfigs) => {
-  const source = workflowRepository.getSource(mapping.sourceId)
-
-  if (!source) {
-    throw new Error('Source not found')
-  }
-
-  const { sourcePath, fileStats } = await validateDashboardSource(source)
-  const selectedSheetName = mapping.columnMappings[0]?.sheetName || mapping.sheetName
-  const preview = await readExcelPreview(sourcePath, {
-    sheetName: selectedSheetName,
-    rowLimit: 500,
-  })
-  const dashboardRows = buildDashboardRowsFromMapping(mapping, preview)
-
-  if (dashboardRows.length === 0) {
-    throw new Error('The selected columns do not contain dashboard rows.')
-  }
-
-  const sourceReadAt = new Date()
-
-  workflowRepository.saveReviews(dashboardRows)
-  workflowRepository.saveSourceMappings({
-    ...mappingConfigs,
-    [mapping.id]: {
-      ...mapping,
-      sheetName: preview.activeSheetName,
-      status: 'Ready',
-    },
-  })
-  workflowRepository.saveDashboardSourceReadStatus({
-    status: 'Fresh',
-    mappingId: mapping.id,
-    sourceId: source.id,
-    sourceFileName: source.sourceFile?.name ?? source.name,
-    sourcePath,
-    sourceModifiedAt: fileStats.mtime.toISOString(),
-    sourceSizeBytes: fileStats.size,
-    sourceReadAt: sourceReadAt.toISOString(),
-    sourceReadAtLabel: formatSourceReadAt(sourceReadAt),
-    rows: dashboardRows.length,
-    message: 'Dashboard source was read successfully.',
-  })
-
-  return {
-    dashboardRows,
-    preview,
-  }
-}
-
-let dashboardRefreshInFlight = null
-
-const ensureDashboardSourceFresh = async ({ forceRead = false } = {}) => {
-  if (dashboardRefreshInFlight) return dashboardRefreshInFlight
-
-  dashboardRefreshInFlight = (async () => {
-    const mappingConfigs = workflowRepository.getSourceMappings()
-    const mapping = Object.values(mappingConfigs).find(isDashboardMappingReady)
-
-    if (!mapping) {
-      workflowRepository.saveDashboardSourceReadStatus({
-        status: 'Mapping missing',
-        message: 'Dashboard source read is waiting for a dashboard mapping.',
-      })
-      return
-    }
-
-    const source = workflowRepository.getSource(mapping.sourceId)
-
-    if (!source) {
-      workflowRepository.saveDashboardSourceReadStatus({
-        status: 'Source unavailable',
-        mappingId: mapping.id,
-        sourceId: mapping.sourceId,
-        message: 'Dashboard source was not found.',
-      })
-      return
-    }
-
-    try {
-      const { sourcePath, fileStats } = await validateDashboardSource(source)
-      const currentStatus = workflowRepository.getDashboardSourceReadStatus()
-      const sourceModifiedAt = fileStats.mtime.toISOString()
-      const sourceUnchanged =
-        currentStatus.mappingId === mapping.id &&
-        currentStatus.sourceId === source.id &&
-        currentStatus.sourceModifiedAt === sourceModifiedAt &&
-        currentStatus.sourceSizeBytes === fileStats.size &&
-        currentStatus.status === 'Fresh'
-
-      if (sourceUnchanged && !forceRead) return
-
-      await rebuildDashboardFromMapping(mapping, mappingConfigs)
-    } catch (error) {
-      workflowRepository.saveDashboardSourceReadStatus({
-        status: 'Source unavailable',
-        mappingId: mapping.id,
-        sourceId: source.id,
-        sourceFileName: source.sourceFile?.name ?? source.name,
-        sourcePath: getSourcePath(source) ?? null,
-        message: error instanceof Error
-          ? error.message
-          : 'Dashboard source could not be read.',
-      })
-    }
-  })()
-
-  try {
-    await dashboardRefreshInFlight
-  } finally {
-    dashboardRefreshInFlight = null
-  }
-}
+const ensureDashboardSourceFresh = async () => {}
 
 const checkSourceAccess = async (source) => {
   const checkedAt = new Date().toISOString()
@@ -1437,79 +1183,6 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     workflowRepository.saveSourceConnections(body.connectionsByTarget)
     sendJson(response, 200, workflowRepository.getBootstrapPayload())
-    return
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/source-mappings') {
-    let body
-
-    try {
-      body = await readJsonBody(request)
-    } catch (error) {
-      sendJsonBodyError(response, error)
-      return
-    }
-
-    if (!isSourceMappingsPayload(body)) {
-      sendJson(response, 400, { error: 'Invalid source mappings payload' })
-      return
-    }
-
-    workflowRepository.saveSourceMappings(body.mappingConfigs)
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
-    return
-  }
-
-  if (request.method === 'POST' && url.pathname === '/api/mappings/apply') {
-    let body
-
-    try {
-      body = await readJsonBody(request)
-    } catch (error) {
-      sendJsonBodyError(response, error)
-      return
-    }
-
-    const mappingConfigs = workflowRepository.getSourceMappings()
-    const mapping = body?.mappingConfig ?? mappingConfigs[body?.mappingId]
-
-    if (
-      !mapping ||
-      typeof mapping !== 'object' ||
-      typeof mapping.id !== 'string' ||
-      !connectionTargetIds.has(mapping.targetId) ||
-      typeof mapping.sourceId !== 'string' ||
-      !Array.isArray(mapping.columnMappings) ||
-      mapping.columnMappings.length === 0
-    ) {
-      sendJson(response, 400, { error: 'A mapping with selected columns is required.' })
-      return
-    }
-
-    if (mapping.targetId !== 'dashboard') {
-      workflowRepository.saveSourceMappings({
-        ...mappingConfigs,
-        [mapping.id]: {
-          ...mapping,
-          sheetName: mapping.sheetName || mapping.columnMappings[0]?.sheetName || '',
-          status: 'Ready',
-        },
-      })
-      sendJson(response, 200, workflowRepository.getBootstrapPayload())
-      return
-    }
-
-    try {
-      await rebuildDashboardFromMapping(mapping, mappingConfigs)
-      sendJson(response, 200, workflowRepository.getBootstrapPayload())
-    } catch (error) {
-      sendJson(response, 500, {
-        error: error instanceof Error
-          ? error.message
-          : 'Dashboard mapping could not be applied.',
-      })
-    }
-
     return
   }
 

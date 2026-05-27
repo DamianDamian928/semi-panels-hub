@@ -58,7 +58,7 @@ const componentSpecs = [
   { component: 'Buttons', required: 'Use .secondary-button values from Sources. Hover must use rgba(18, 31, 47, 0.64), no brighter custom hover.' },
   { component: 'Close action', required: 'Use .source-detail-close-button: transparent, uppercase 11px, #8692a2, underline on hover.' },
   { component: 'Status dots', required: 'Use inline 5px dot pattern from .source-status-dot inside row or detail panel.' },
-  { component: 'Mapping Studio', required: 'When restyling, copy Sources selected row, right panel and table tokens exactly. Do not invent new active colors.' },
+  { component: 'Validation workspaces', required: 'When restyling, copy Sources selected row, right panel and table tokens exactly. Do not invent new active colors.' },
 ]
 
 const strictRules = [

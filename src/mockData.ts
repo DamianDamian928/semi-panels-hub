@@ -137,7 +137,7 @@ export const validationStatesBySource: Record<string, { state: ValidationState; 
   'Fishbowl export': { state: 'Valid', message: 'Source checked and ready.' },
   'Mass Production costing': { state: 'Warning', message: 'Imported with minor gaps to review.' },
   'Parts&BOM': { state: 'Valid', message: 'Structure looks correct.' },
-  'BOX documentation': { state: 'Error', message: 'Missing required file mapping.' },
+  'BOX documentation': { state: 'Error', message: 'Missing required file contract.' },
   'Sharepoint documentation': { state: 'Not checked', message: 'Validation has not been run yet.' },
   'PLM SQL connection': { state: 'Not checked', message: 'SQL profile has not been configured yet.' },
   'MATVAR file': { state: 'Not checked', message: 'MATVAR export location has not been selected yet.' },

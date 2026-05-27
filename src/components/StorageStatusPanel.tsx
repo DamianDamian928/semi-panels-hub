@@ -42,7 +42,7 @@ export function StorageStatusPanel({ status, loading, error }: StorageStatusPane
       <span>Data storage</span>
       <span className="storage-status-detail">
         <small>{status.storage}</small>
-        <small>{status.records} records{status.mappedColumns !== undefined ? ` / ${status.mappedColumns} columns` : ''}</small>
+        <small>{status.records} records</small>
         <small>Refreshed {formatStorageTime(status.refreshedAt)}</small>
       </span>
     </section>

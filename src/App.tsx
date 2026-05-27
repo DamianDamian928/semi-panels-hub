@@ -82,15 +82,12 @@ export default function App() {
         apiConnectionState={workflowData.apiConnectionState}
         apiConnectionError={workflowData.apiConnectionError}
         sourceConnectionsByTarget={workflowData.sourceConnectionsByTarget}
-        sourceMappingConfigs={workflowData.sourceMappingConfigs}
         createSource={workflowData.createSource}
         deleteSource={workflowData.deleteSource}
         registerSourceLocalFile={workflowData.registerSourceLocalFile}
         checkSourcesAccess={workflowData.checkSourcesAccess}
         checkSourceAccess={workflowData.checkSourceAccess}
         saveSourceConnections={workflowData.saveSourceConnections}
-        saveSourceMappings={workflowData.saveSourceMappings}
-        applyMapping={workflowData.applyMapping}
         markIssueForDecision={workflowData.markIssueForDecision}
         saveDecisionStatus={workflowData.setDecisionStatus}
         savePreparedOutput={workflowData.prepareOutput}

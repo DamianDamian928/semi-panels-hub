@@ -26,9 +26,7 @@ export const statusClassName: Record<ReviewStatus, string> = {
 export const sidebarSteps: SidebarStepDefinition[] = [
   { step: 'Sources', label: 'Sources', icon: 'sources' },
   { step: 'Connections', label: 'Connections', icon: 'connections' },
-  { step: 'Mapping', label: 'Mapping', icon: 'mapping' },
   { step: 'Validation', label: 'Validation', icon: 'validation' },
-  { step: 'Normalization', label: 'Normalization', icon: 'normalization' },
   { step: 'Comparison', label: 'Comparison', icon: 'comparison' },
   { step: 'Review', label: 'Review', icon: 'review' },
   { step: 'Decisions', label: 'Decisions', icon: 'decisions' },
@@ -134,28 +132,10 @@ export function SidebarGlyph({ name, className, ...props }: { name: SidebarIconN
         <path d="M9.95 17.05l4.6-3.05" />
       </>
     ),
-    mapping: (
-      <>
-        <path d="M5 6h14" />
-        <path d="M5 12h14" />
-        <path d="M5 18h14" />
-        <path d="M8 4v16" />
-        <path d="M14 4v16" />
-      </>
-    ),
     validation: (
       <>
         <path d="M12 3l7 2.8v5.1c0 4.5-2.7 8.2-7 10.1-4.3-1.9-7-5.6-7-10.1V5.8L12 3Z" />
         <path d="m9.1 11.9 2 2.1 4-4.4" />
-      </>
-    ),
-    normalization: (
-      <>
-        <path d="M4 7h10" />
-        <path d="M4 17h16" />
-        <path d="M10 7 7 4 4 7" />
-        <path d="m14 17 3 3 3-3" />
-        <path d="M17 7h3" />
       </>
     ),
     comparison: (

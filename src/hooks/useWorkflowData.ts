@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   ApiRequestError,
-  apiApplyMapping,
   apiCheckSourceAccess,
   apiCheckSourcesAccess,
   apiCreateSource,
@@ -10,7 +9,6 @@ import {
   apiPrepareOutput,
   apiRegisterSourceLocalFile,
   apiSaveSourceConnections,
-  apiSaveSourceMappings,
   apiSetDecisionStatus,
   fetchBootstrapData,
 } from '../apiClient'
@@ -45,7 +43,6 @@ import type {
   SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
-  SourceMappingConfig,
   SourceReadStatus,
 } from '../types'
 
@@ -80,7 +77,6 @@ export const useWorkflowData = () => {
   const [apiConnectionState, setApiConnectionState] = useState<ApiConnectionState>('loading')
   const [apiConnectionError, setApiConnectionError] = useState<string | null>(null)
   const [sourceConnectionsByTarget, setSourceConnectionsByTarget] = useState<SourceConnectionsByTarget | null>(null)
-  const [sourceMappingConfigs, setSourceMappingConfigs] = useState<Record<string, SourceMappingConfig>>({})
   const [sourceReadStatus, setSourceReadStatus] = useState<SourceReadStatus | null>(null)
 
   const applyWorkflowPayload = (payload: WorkflowPayload) => {
@@ -106,7 +102,6 @@ export const useWorkflowData = () => {
     setSourceDefinitions(data.sources)
     setValidationStatesBySource(data.validationStatesBySource)
     setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
-    setSourceMappingConfigs(data.sourceMappingConfigs)
     setSourceReadStatus(data.sourceReadStatus)
     applyWorkflowPayload(data)
   }
@@ -121,7 +116,6 @@ export const useWorkflowData = () => {
     setAuditEvents(fallbackAuditEvents)
     setWorkflowView(null)
     setSourceConnectionsByTarget(null)
-    setSourceMappingConfigs({})
     setSourceReadStatus(null)
   }
 
@@ -260,38 +254,11 @@ export const useWorkflowData = () => {
     try {
       const data = await apiSaveSourceConnections(connectionsByTarget)
       setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
-      setSourceMappingConfigs(data.sourceMappingConfigs)
       setApiConnectionState('ready')
       setApiConnectionError(null)
     } catch (error: unknown) {
       setApiConnectionState(getApiFailureState(error))
       setApiConnectionError(getApiFailureMessage(error, 'Connections could not be saved.'))
-      throw error
-    }
-  }
-
-  const saveSourceMappings = async (mappingConfigs: Record<string, SourceMappingConfig>) => {
-    try {
-      const data = await apiSaveSourceMappings(mappingConfigs)
-      setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
-      setSourceMappingConfigs(data.sourceMappingConfigs)
-      setApiConnectionState('ready')
-      setApiConnectionError(null)
-    } catch (error: unknown) {
-      setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Mapping configuration could not be saved.'))
-      throw error
-    }
-  }
-
-  const applyMapping = async (mappingId: string, mappingConfig: SourceMappingConfig) => {
-    try {
-      applyBootstrapPayload(await apiApplyMapping(mappingId, mappingConfig))
-      setApiConnectionState('ready')
-      setApiConnectionError(null)
-    } catch (error: unknown) {
-      setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Mapping could not be applied.'))
       throw error
     }
   }
@@ -408,7 +375,6 @@ export const useWorkflowData = () => {
     apiConnectionState,
     apiConnectionError,
     sourceConnectionsByTarget,
-    sourceMappingConfigs,
     sourceReadStatus,
     refreshBootstrapData,
     createSource,
@@ -417,8 +383,6 @@ export const useWorkflowData = () => {
     checkSourcesAccess,
     checkSourceAccess,
     saveSourceConnections,
-    saveSourceMappings,
-    applyMapping,
     markIssueForDecision,
     setDecisionStatus,
     prepareOutput,

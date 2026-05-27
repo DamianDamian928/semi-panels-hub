@@ -13,7 +13,6 @@ import type {
   SourceDefinition,
   SourceFileMetadata,
   SourceReadStatus,
-  SourceMappingConfig,
   ValidationState,
 } from './types'
 
@@ -104,7 +103,6 @@ export type StorageStatusPayload = {
   subject: string
   persistence: string
   records: number
-  mappedColumns?: number
   lastUpdated: string | null
   detail: string
   refreshedAt: string
@@ -125,7 +123,7 @@ export type BomMatvarValidationPayload = {
   status: ValidationState
   summary: {
     connectedSources: number
-    mappedSources: number
+    contractSources: number
     matchedRows: number
     validPartNumbers: number
     invalidPartNumbers: number
@@ -146,11 +144,12 @@ export type BomMatvarValidationPayload = {
     id: string
     name: string
     status: string
-    role: string
-    mappingStatus: string
-    mappedColumns: string[]
+    contractRole: string
   }>
   bomL0Rows: Array<{
+    sourceName: string
+    sourcePath: string
+    sourceSheet: string
     partNumber: string
     description: string
     updatedAtRaw: string
@@ -158,6 +157,9 @@ export type BomMatvarValidationPayload = {
     partNumberValid: boolean
   }>
   matvarRows: Array<{
+    sourceName: string
+    sourcePath: string
+    sourceSheet: string
     item: string
     oracleItemDescription: string
     intelDescription: string
@@ -194,6 +196,23 @@ export type BomMatvarComparisonPayload = {
     partNumber: string
     description: string
     status: 'OK' | 'Fallback' | 'Missing' | 'Context' | 'Info'
+    message: string
+  }>
+  matvarRules: Array<{
+    id: string
+    rule: string
+    expected: string
+    result: string
+    sourceName: string
+    sourcePath: string
+    sourceSheet: string
+    item: string
+    oracleItemDescription: string
+    intelDescription: string
+    phantomL1: string
+    scope: string
+    verificationText: string
+    status: 'OK' | 'Missing' | 'Mismatch' | 'Context'
     message: string
   }>
 }
@@ -281,7 +300,6 @@ type BootstrapResponse = WorkflowPayload & {
   sources: SourceDefinition[]
   validationStatesBySource: Record<string, { state: ValidationState; message: string }>
   sourceConnectionsByTarget: SourceConnectionsByTarget | null
-  sourceMappingConfigs: Record<string, SourceMappingConfig>
   sourceReadStatus: SourceReadStatus
 }
 
@@ -389,12 +407,6 @@ export const apiCheckSourceAccess = (sourceId: string) =>
 
 export const apiSaveSourceConnections = (connectionsByTarget: SourceConnectionsByTarget) =>
   postJson<BootstrapResponse>('/api/source-connections', { connectionsByTarget })
-
-export const apiSaveSourceMappings = (mappingConfigs: Record<string, SourceMappingConfig>) =>
-  postJson<BootstrapResponse>('/api/source-mappings', { mappingConfigs })
-
-export const apiApplyMapping = (mappingId: string, mappingConfig: SourceMappingConfig) =>
-  postJson<BootstrapResponse>('/api/mappings/apply', { mappingId, mappingConfig }, { timeoutMs: 30000 })
 
 export const apiFetchSourcePreview = (sourceId: string, sheetName?: string) => {
   const params = new URLSearchParams({ rowLimit: '100' })

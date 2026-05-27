@@ -1,7 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
-import { createMappingId } from '../../domain/sourceMapping'
-import type { ConnectionTargetId, SourceDefinition, SourceMappingConfig } from '../../types'
+import type { ConnectionTargetId, SourceDefinition } from '../../types'
 import { connectionTargets } from '../sharedReviewUi'
 
 type ConnectionsByTarget = Record<ConnectionTargetId, string[]>
@@ -9,7 +8,6 @@ type ConnectionsByTarget = Record<ConnectionTargetId, string[]>
 type ConnectionsStepProps = {
   activeConnectionTargetId: ConnectionTargetId
   connectionsByTarget: ConnectionsByTarget
-  mappingConfigs: Record<string, SourceMappingConfig>
   sourceDefinitions: SourceDefinition[]
   onSelectConnectionTarget: (targetId: ConnectionTargetId) => void
   onSaveConnections: (connectionsByTarget: ConnectionsByTarget) => Promise<void>
@@ -52,13 +50,11 @@ type ConnectionChange = {
   isBomTarget: boolean
   sourceId: string
   sourceLabel: string
-  mappingColumns: number
 }
 
 export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStepProps>(function ConnectionsStep({
   activeConnectionTargetId,
   connectionsByTarget,
-  mappingConfigs,
   sourceDefinitions,
   onSelectConnectionTarget,
   onSaveConnections,
@@ -97,12 +93,10 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
               isBomTarget: target.group === 'BOM',
               sourceId,
               sourceLabel: source?.sourceFile?.name ?? source?.name ?? sourceId,
-              mappingColumns: 0,
             }
           }),
           ...removed.map((sourceId) => {
             const source = sourceById.get(sourceId)
-            const mapping = mappingConfigs[createMappingId(target.id, sourceId)]
             return {
               action: 'removed' as const,
               targetId: target.id,
@@ -110,16 +104,14 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
               isBomTarget: target.group === 'BOM',
               sourceId,
               sourceLabel: source?.sourceFile?.name ?? source?.name ?? sourceId,
-              mappingColumns: mapping?.columnMappings.length ?? 0,
             }
           }),
         ]
       }),
-    [connectionsByTarget, draftConnectionsByTarget, mappingConfigs, sourceById],
+    [connectionsByTarget, draftConnectionsByTarget, sourceById],
   )
   const hasUnsavedConnectionChanges = connectionChanges.length > 0
   const bomConnectionChanges = connectionChanges.filter((change) => change.isBomTarget)
-  const removedMappingsKept = connectionChanges.filter((change) => change.action === 'removed' && change.mappingColumns > 0)
   const connectedSourceIds = new Set(
     connectionTargets.flatMap((target) =>
       (draftConnectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)),
@@ -461,14 +453,6 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
               <div>
                 <dt>BOM impact</dt>
                 <dd>{bomConnectionChanges.length ? `${bomConnectionChanges.length} BOM changes can affect BOM analysis.` : 'No direct BOM target impact.'}</dd>
-              </div>
-              <div>
-                <dt>Mapping impact</dt>
-                <dd>
-                  {removedMappingsKept.length
-                    ? `${removedMappingsKept.length} mapping setup(s) will be excluded from active analysis, but kept for reuse.`
-                    : 'No existing mapping will be removed.'}
-                </dd>
               </div>
             </dl>
 
