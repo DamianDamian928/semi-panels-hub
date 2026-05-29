@@ -28,7 +28,6 @@ export const sidebarSteps: SidebarStepDefinition[] = [
   { step: 'Connections', label: 'Connections', icon: 'connections' },
   { step: 'Validation', label: 'Validation', icon: 'validation' },
   { step: 'Comparison', label: 'Comparison', icon: 'comparison' },
-  { step: 'Review', label: 'Review', icon: 'review' },
   { step: 'Decisions', label: 'Decisions', icon: 'decisions' },
   { step: 'Output', label: 'Output', icon: 'output' },
   { step: 'AI Assistant', label: 'AI Assistant', icon: 'aiAssistant' },
@@ -144,15 +143,6 @@ export function SidebarGlyph({ name, className, ...props }: { name: SidebarIconN
         <path d="m15 5 5 5-5 5" />
         <path d="M20 10H8" />
         <path d="M16 14H4" />
-      </>
-    ),
-    review: (
-      <>
-        <path d="M6 4.5h12A1.5 1.5 0 0 1 19.5 6v12A1.5 1.5 0 0 1 18 19.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5Z" />
-        <path d="M8 9h8" />
-        <path d="M8 13h5" />
-        <circle cx="16.5" cy="15.5" r="2.5" />
-        <path d="m18.3 17.3 2.2 2.2" />
       </>
     ),
     decisions: (
@@ -357,7 +347,8 @@ export const connectionsCustomStyles = `
   .connection-source-node-content { min-width: 0; display: grid; gap: 7px; }
   .connection-source-node-top { min-width: 0; display: grid; align-items: center; }
   .connection-source-node-top h4 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f4f9ff; font-size: 14px; }
-  .connection-source-node-meta { display: flex; align-items: center; gap: 10px; color: #9fb4cf; font-size: 12px; }
+  .connection-source-node-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: #9fb4cf; font-size: 12px; }
+  .connection-source-role { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 8px; border-radius: 7px; border: 1px solid rgba(126, 172, 220, 0.24); background: rgba(16, 39, 64, 0.62); color: #d9ecff; font-size: 11px; font-weight: 800; }
   .connection-node-action { min-height: 34px; width: 96px; border-radius: 7px; border: 1px solid rgba(97,155,244,0.28); background: rgba(8,29,56,0.58); color: #e7f2ff; font-size: 12px; font-weight: 800; cursor: pointer; }
   .connection-node-action:hover { border-color: rgba(119, 190, 255, 0.68); background: rgba(16, 48, 84, 0.86); }
   .connection-node-action-remove { border-color: rgba(255,138,122,0.28); background: rgba(69, 30, 31, 0.54); color: #ffbfaf; }

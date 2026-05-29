@@ -7,8 +7,6 @@ import type {
   OutputFilter,
   OutputItem,
   OutputStatus,
-  ReviewIssue,
-  ReviewIssueFilter,
 } from '../types'
 import {
   findDecisionForIssue,
@@ -16,20 +14,11 @@ import {
   resolveDecisionStatus,
 } from '../workflowModel'
 
-export type ReviewIssueRow = ReviewIssue
-
 export type DecisionRow = DecisionRecord
 
 export type OutputRow = OutputItem & {
   linkedDecision?: DecisionRow
   status: OutputStatus
-}
-
-export type ReviewIssueSummary = {
-  open: number
-  needsDecision: number
-  highSeverity: number
-  resolved: number
 }
 
 export type DecisionSummary = Record<DecisionStatus, number>
@@ -47,45 +36,6 @@ export type AuditSummary = {
   decisionChanges: number
   outputChanges: number
 }
-
-export const getReviewIssueRows = (
-  issues: ReviewIssue[],
-  decisions: DecisionRecord[],
-  issueDecisionStates: Record<string, DecisionState>,
-  decisionStatuses: Record<string, DecisionStatus>,
-): ReviewIssueRow[] =>
-  issues.map((issue) => ({
-    ...issue,
-    decision:
-      issueDecisionStates[issue.id] ??
-      decisionStatuses[issue.id] ??
-      (issue.decision !== 'None'
-        ? issue.decision
-        : findDecisionForIssue(decisions, issue.id)?.status ?? issue.decision),
-  }))
-
-export const filterReviewIssues = (
-  issues: ReviewIssueRow[],
-  filter: ReviewIssueFilter,
-): ReviewIssueRow[] =>
-  issues.filter((issue) => {
-    if (filter === 'Open') return issue.status !== 'Resolved'
-    if (filter === 'Needs decision') return issue.decision === 'Required'
-    if (filter === 'Resolved') return issue.status === 'Resolved'
-    return true
-  })
-
-export const summarizeReviewIssues = (issues: ReviewIssueRow[]): ReviewIssueSummary =>
-  issues.reduce(
-    (acc, issue) => {
-      if (issue.status !== 'Resolved') acc.open += 1
-      if (issue.decision === 'Required') acc.needsDecision += 1
-      if (issue.severity === 'High' && issue.status !== 'Resolved') acc.highSeverity += 1
-      if (issue.status === 'Resolved') acc.resolved += 1
-      return acc
-    },
-    { open: 0, needsDecision: 0, highSeverity: 0, resolved: 0 },
-  )
 
 export const getDecisionRows = (
   decisions: DecisionRecord[],

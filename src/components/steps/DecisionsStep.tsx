@@ -3,11 +3,13 @@ import {
   getDecisionRows,
   summarizeDecisions,
 } from '../../domain/workflowSelectors'
+import type { BomMatvarComparisonPayload } from '../../apiClient'
 import {
   defaultPersistenceState,
   getStateToken,
   persistenceStateDescription,
 } from '../../workflowModel'
+import { validationStateClassName } from '../sharedReviewUi'
 import type {
   ConnectionTarget,
   ConnectionTargetId,
@@ -19,26 +21,22 @@ import type {
   PersistenceState,
   ProcessStep,
   ReviewIssue,
-  ReviewIssueFilter,
 } from '../../types'
 
 type DecisionsStepProps = {
   selectedReview: DashboardRow
   reviewIssues: ReviewIssue[]
+  comparison: BomMatvarComparisonPayload | null
   decisionRecords: DecisionRecord[]
   issueDecisionStates: Record<string, DecisionState>
   decisionStatuses: Record<string, DecisionStatus>
   decisionPersistenceStates: Record<string, PersistenceState>
-  activeDecisionIssueId: string
   decisionFilter: DecisionFilter
   activeDecisionTargetId: ConnectionTargetId
   connectionTargets: ConnectionTarget[]
   connectionsByTarget: Record<ConnectionTargetId, string[]>
-  onSelectDecisionIssue: (issueId: string) => void
-  onSelectReviewIssue: (issueId: string) => void
   onSelectDecisionTarget: (targetId: ConnectionTargetId) => void
   onSetDecisionFilter: (filter: DecisionFilter) => void
-  onSetReviewIssueFilter: (filter: ReviewIssueFilter) => void
   onSetProcessStep: (step: ProcessStep) => void
   onSaveDecisionStatus: (decision: DecisionRecord, status: DecisionStatus) => Promise<void>
 }
@@ -48,35 +46,32 @@ const isDecisionForTarget = (record: DecisionRecord, targetId: ConnectionTargetI
   return false
 }
 
-const getDecisionStatusClass = (status: DecisionStatus) => {
-  if (status === 'Accepted') return 'source-status-ready'
-  if (status === 'Deferred') return 'source-status-needs-location'
-  return 'source-status-needs-check'
-}
-
 const getTargetDecisionState = (decisions: DecisionRecord[]) => {
   if (decisions.length === 0) return { label: 'Ready', className: 'source-status-ready' }
   if (decisions.every((decision) => decision.status === 'Accepted')) return { label: 'Ready', className: 'source-status-ready' }
   return { label: 'Needs decision', className: 'source-status-needs-check' }
 }
 
+const getRuleStatusClass = (status: string) => {
+  if (status === 'OK' || status === 'Context') return validationStateClassName.Valid
+  if (status === 'Fallback' || status === 'Info' || status === 'Mismatch') return validationStateClassName.Warning
+  return validationStateClassName.Error
+}
+
 export function DecisionsStep({
   selectedReview,
   reviewIssues,
+  comparison,
   decisionRecords,
   issueDecisionStates,
   decisionStatuses,
   decisionPersistenceStates,
-  activeDecisionIssueId,
   decisionFilter,
   activeDecisionTargetId,
   connectionTargets,
   connectionsByTarget,
-  onSelectDecisionIssue,
-  onSelectReviewIssue,
   onSelectDecisionTarget,
   onSetDecisionFilter,
-  onSetReviewIssueFilter,
   onSetProcessStep,
   onSaveDecisionStatus,
 }: DecisionsStepProps) {
@@ -86,9 +81,7 @@ export function DecisionsStep({
   const targetDecisionRows = decisionRows.filter((record) => isDecisionForTarget(record, activeDecisionTarget.id, selectedReview.id))
   const filteredDecisions = filterDecisions(targetDecisionRows, decisionFilter)
   const summary = summarizeDecisions(targetDecisionRows)
-  const selectedDecision =
-    filteredDecisions.find((record) => record.issueId === activeDecisionIssueId) ??
-    filteredDecisions[0]
+  const selectedDecision = filteredDecisions[0]
   const selectedDecisionIssue = selectedDecision
     ? reviewIssues.find((issue) => issue.id === selectedDecision.issueId)
     : undefined
@@ -97,6 +90,22 @@ export function DecisionsStep({
     : defaultPersistenceState
   const activeTargetDecisionState = getTargetDecisionState(targetDecisionRows)
   const filterOptions: DecisionFilter[] = ['All', 'Required', 'Drafted', 'Accepted', 'Deferred']
+  const bomL0Rules = comparison?.rules ?? []
+  const matvarRules = comparison?.matvarRules ?? []
+  const bomL0RulesSourceLabel = bomL0Rules[0]?.partNumber
+    ? 'BOM L0.xlsx / Arkusz1'
+    : ''
+  const matvarRulesSourceLabel = matvarRules[0]
+    ? [matvarRules[0].sourceName, matvarRules[0].sourceSheet].filter(Boolean).join(' / ')
+    : ''
+  const decisionByIssueId = new Map(targetDecisionRows.map((decision) => [decision.issueId, decision]))
+
+  const getDecisionText = (issueId: string, status: string) => {
+    const decision = decisionByIssueId.get(issueId)
+    if (decision) return decision.proposedDecision
+    if (status === 'Missing' || status === 'Fallback' || status === 'Mismatch') return 'Decision pending'
+    return 'No decision required'
+  }
 
   const setDecisionStatus = async (status: DecisionStatus) => {
     if (!selectedDecision) return
@@ -110,18 +119,15 @@ export function DecisionsStep({
           <div>
             <p className="section-label">Decisions</p>
             <h3>Decision registry</h3>
-            <p>Decision records linked to review issues for the current review and selected workflow target.</p>
+            <p>Decision records generated from comparison findings. These records will feed the future Dashboard Open review.</p>
           </div>
           <div className="sources-registry-actions" aria-label="Decision actions">
             <button
               type="button"
               className="secondary-button source-action-button"
-              onClick={() => {
-                onSetReviewIssueFilter('All')
-                onSetProcessStep('Review')
-              }}
+              onClick={() => onSetProcessStep('Comparison')}
             >
-              Back to Review
+              Back to Comparison
             </button>
           </div>
         </div>
@@ -162,58 +168,96 @@ export function DecisionsStep({
           })}
         </div>
 
-        <div className="source-registry-list" aria-label="Decision records">
-          <div className="source-registry-list-head" aria-hidden="true">
-            <span />
-            <span>Decision</span>
-            <span>Impact</span>
-            <span>Owner</span>
-            <span>Status</span>
+        <p className="source-detail-section-title">
+          BOM L0 rules{bomL0RulesSourceLabel ? ` (${bomL0RulesSourceLabel})` : ''}
+        </p>
+        {bomL0Rules.length ? (
+          <div className="table-wrap comparison-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Rule</th>
+                  <th>Expected</th>
+                  <th>Result</th>
+                  <th>Part Number</th>
+                  <th>Description</th>
+                  <th>Data aktualizacji</th>
+                  <th>Decision</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bomL0Rules.map((rule) => {
+                  const issueId = `bom-matvar-${selectedReview.id}-${rule.id}`
+                  return (
+                    <tr key={rule.id}>
+                      <td>
+                        <span className={getRuleStatusClass(rule.status)}>{rule.status}</span>
+                      </td>
+                      <td>{rule.rule}</td>
+                      <td>{rule.expected}</td>
+                      <td>{rule.result}</td>
+                      <td>{rule.partNumber || '-'}</td>
+                      <td>{rule.description || '-'}</td>
+                      <td title={rule.updatedAtRaw || undefined}>{rule.updatedAt || '-'}</td>
+                      <td>{getDecisionText(issueId, rule.status)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
-          {filteredDecisions.length > 0 ? filteredDecisions.map((record) => {
-            const isActive = record.issueId === selectedDecision?.issueId
-            const decisionStatusClass = getDecisionStatusClass(record.status)
+        ) : (
+          <div className="source-registry-empty">
+            <strong>No BOM L0 comparison data</strong>
+            <p>Run comparison to generate decision candidates.</p>
+          </div>
+        )}
 
-            return (
-              <button
-                key={record.issueId}
-                type="button"
-                className={`source-registry-row ${isActive ? 'source-registry-row-active' : ''}`}
-                onClick={() => {
-                  onSelectDecisionIssue(record.issueId)
-                  onSelectReviewIssue(record.issueId)
-                }}
-              >
-                <span className="source-registry-type" aria-hidden="true">
-                  <span className="source-type-icon source-type-icon-compact">D</span>
-                </span>
-                <span className="source-registry-name">
-                  <span>
-                    <strong>{record.issueTitle}</strong>
-                    <small>{record.area} | {record.source} vs {record.comparedWith}</small>
-                  </span>
-                </span>
-                <span className="source-application-type" title={record.outputImpact}>
-                  {record.outputImpact}
-                </span>
-                <span className="source-file-size">{record.owner}</span>
-                <span className={`source-status ${decisionStatusClass}`}>
-                  <span className="source-status-dot" />
-                  {record.status}
-                </span>
-              </button>
-            )
-          }) : (
-            <div className="source-registry-empty">
-              <strong>{targetDecisionRows.length ? 'No decisions match this filter' : 'No decisions for this target'}</strong>
-              <p>
-                {activeDecisionTarget.id === 'bom-matvar'
-                  ? 'Mark BOM Matvar review issues for decision to create records here.'
-                  : 'This workflow target is prepared for decisions once its review issues are generated.'}
-              </p>
-            </div>
-          )}
-        </div>
+        <p className="source-detail-section-title">
+          MATVAR rules{matvarRulesSourceLabel ? ` (${matvarRulesSourceLabel})` : ''}
+        </p>
+        {matvarRules.length ? (
+          <div className="table-wrap comparison-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Rule</th>
+                  <th>Expected</th>
+                  <th>Result</th>
+                  <th>Item</th>
+                  <th>INTEL Description</th>
+                  <th>Phantom L1</th>
+                  <th>Scope</th>
+                  <th>Weryfikacja Matvar</th>
+                  <th>Decision</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matvarRules.map((rule) => {
+                  const issueId = `bom-matvar-${selectedReview.id}-${rule.id}`
+                  return (
+                    <tr key={rule.id}>
+                      <td>
+                        <span className={getRuleStatusClass(rule.status)}>{rule.status}</span>
+                      </td>
+                      <td>{rule.rule}</td>
+                      <td>{rule.expected}</td>
+                      <td>{rule.result}</td>
+                      <td>{rule.item || '-'}</td>
+                      <td>{rule.intelDescription || '-'}</td>
+                      <td>{rule.phantomL1 || '-'}</td>
+                      <td>{rule.scope || '-'}</td>
+                      <td>{rule.verificationText || '-'}</td>
+                      <td>{getDecisionText(issueId, rule.status)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
       </section>
 
       <aside className="workspace-side-panel card source-detail-panel" aria-label="Decision scope">
@@ -241,7 +285,7 @@ export function DecisionsStep({
             <dd>{selectedReview.intelModel}</dd>
           </div>
           <div className="source-property-row">
-            <dt>Sources</dt>
+            <dt>Context links</dt>
             <dd>{activeTargetSourceCount}</dd>
           </div>
           <div className="source-property-row">
@@ -285,11 +329,11 @@ export function DecisionsStep({
             <p className="source-detail-section-title">Selected decision</p>
             <dl className="source-property-list">
               <div className="source-property-row source-property-row-stacked">
-                <dt>Linked issue</dt>
+                <dt>Comparison finding</dt>
                 <dd>{selectedDecision.issueTitle}</dd>
               </div>
               <div className="source-property-row">
-                <dt>Issue context</dt>
+                <dt>Finding context</dt>
                 <dd>
                   {selectedDecisionIssue
                     ? `${selectedDecisionIssue.area} | ${selectedDecisionIssue.severity} | ${selectedDecisionIssue.status}`

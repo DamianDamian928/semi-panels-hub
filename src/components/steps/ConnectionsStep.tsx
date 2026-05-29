@@ -1,6 +1,5 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent } from 'react'
-import type { ConnectionTargetId, SourceDefinition } from '../../types'
+import { forwardRef, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ConnectionTargetId, SourceConnectionRolesByTarget, SourceDefinition } from '../../types'
 import { connectionTargets } from '../sharedReviewUi'
 
 type ConnectionsByTarget = Record<ConnectionTargetId, string[]>
@@ -8,9 +7,9 @@ type ConnectionsByTarget = Record<ConnectionTargetId, string[]>
 type ConnectionsStepProps = {
   activeConnectionTargetId: ConnectionTargetId
   connectionsByTarget: ConnectionsByTarget
+  connectionRolesByTarget: SourceConnectionRolesByTarget | null
   sourceDefinitions: SourceDefinition[]
   onSelectConnectionTarget: (targetId: ConnectionTargetId) => void
-  onSaveConnections: (connectionsByTarget: ConnectionsByTarget) => Promise<void>
 }
 
 export type ConnectionsStepHandle = {
@@ -43,27 +42,13 @@ type ConnectionLinkGeometry = {
   isActive: boolean
 }
 
-type ConnectionChange = {
-  action: 'added' | 'removed'
-  targetId: ConnectionTargetId
-  targetLabel: string
-  isBomTarget: boolean
-  sourceId: string
-  sourceLabel: string
-}
-
 export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStepProps>(function ConnectionsStep({
   activeConnectionTargetId,
   connectionsByTarget,
+  connectionRolesByTarget,
   sourceDefinitions,
   onSelectConnectionTarget,
-  onSaveConnections,
 }, ref) {
-  const [draggedSourceId, setDraggedSourceId] = useState<string | null>(null)
-  const [draftConnectionsByTarget, setDraftConnectionsByTarget] = useState<ConnectionsByTarget>(connectionsByTarget)
-  const [impactReviewOpen, setImpactReviewOpen] = useState(false)
-  const [connectionSavePending, setConnectionSavePending] = useState(false)
-  const [connectionSaveError, setConnectionSaveError] = useState<string | null>(null)
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 })
   const [linkGeometry, setLinkGeometry] = useState<ConnectionLinkGeometry[]>([])
   const canvasRef = useRef<HTMLDivElement | null>(null)
@@ -74,113 +59,22 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
     [sourceDefinitions],
   )
   const activeTarget = connectionTargets.find((target) => target.id === activeConnectionTargetId) ?? connectionTargets[0]
-  const activeSourceIds = (draftConnectionsByTarget[activeTarget.id] ?? []).filter((sourceId) => sourceById.has(sourceId))
-  const connectionChanges = useMemo<ConnectionChange[]>(
-    () =>
-      connectionTargets.flatMap((target) => {
-        const savedSourceIds = new Set(connectionsByTarget[target.id] ?? [])
-        const draftSourceIds = new Set(draftConnectionsByTarget[target.id] ?? [])
-        const added = [...draftSourceIds].filter((sourceId) => !savedSourceIds.has(sourceId))
-        const removed = [...savedSourceIds].filter((sourceId) => !draftSourceIds.has(sourceId))
-
-        return [
-          ...added.map((sourceId) => {
-            const source = sourceById.get(sourceId)
-            return {
-              action: 'added' as const,
-              targetId: target.id,
-              targetLabel: target.label,
-              isBomTarget: target.group === 'BOM',
-              sourceId,
-              sourceLabel: source?.sourceFile?.name ?? source?.name ?? sourceId,
-            }
-          }),
-          ...removed.map((sourceId) => {
-            const source = sourceById.get(sourceId)
-            return {
-              action: 'removed' as const,
-              targetId: target.id,
-              targetLabel: target.label,
-              isBomTarget: target.group === 'BOM',
-              sourceId,
-              sourceLabel: source?.sourceFile?.name ?? source?.name ?? sourceId,
-            }
-          }),
-        ]
-      }),
-    [connectionsByTarget, draftConnectionsByTarget, sourceById],
-  )
-  const hasUnsavedConnectionChanges = connectionChanges.length > 0
-  const bomConnectionChanges = connectionChanges.filter((change) => change.isBomTarget)
+  const activeSourceIds = (connectionsByTarget[activeTarget.id] ?? []).filter((sourceId) => sourceById.has(sourceId))
   const connectedSourceIds = new Set(
     connectionTargets.flatMap((target) =>
-      (draftConnectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)),
+      (connectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)),
     ),
   )
   const totalConnectionCount = connectionTargets.reduce(
-    (count, target) => count + (draftConnectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)).length,
+    (count, target) => count + (connectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId)).length,
     0,
   )
 
-  useEffect(() => {
-    setDraftConnectionsByTarget(connectionsByTarget)
-    setImpactReviewOpen(false)
-    setConnectionSaveError(null)
-  }, [connectionsByTarget])
-
-  const updateDraftConnection = (targetId: ConnectionTargetId, sourceId: string, action: 'connect' | 'disconnect') => {
-    setDraftConnectionsByTarget((current) => {
-      const currentSourceIds = current[targetId] ?? []
-      const nextSourceIds = action === 'connect'
-        ? currentSourceIds.includes(sourceId) ? currentSourceIds : [...currentSourceIds, sourceId]
-        : currentSourceIds.filter((connectedSourceId) => connectedSourceId !== sourceId)
-
-      return {
-        ...current,
-        [targetId]: nextSourceIds,
-      }
-    })
-    onSelectConnectionTarget(targetId)
-    setConnectionSaveError(null)
-  }
-
-  const dropSourceOnTarget = (event: DragEvent<HTMLButtonElement>, targetId: ConnectionTargetId) => {
-    event.preventDefault()
-    const sourceId = event.dataTransfer.getData('text/plain')
-    if (sourceId) updateDraftConnection(targetId, sourceId, 'connect')
-    setDraggedSourceId(null)
-  }
-
-  const cancelConnectionChanges = () => {
-    setDraftConnectionsByTarget(connectionsByTarget)
-    setImpactReviewOpen(false)
-    setConnectionSaveError(null)
-  }
-
-  const saveConnectionChanges = async () => {
-    setConnectionSavePending(true)
-    setConnectionSaveError(null)
-
-    try {
-      await onSaveConnections(draftConnectionsByTarget)
-      setImpactReviewOpen(false)
-    } catch (error: unknown) {
-      setConnectionSaveError(error instanceof Error ? error.message : 'Connection changes could not be saved.')
-      throw error
-    } finally {
-      setConnectionSavePending(false)
-    }
-  }
-
-  const confirmConnectionChanges = async () => {
-    await saveConnectionChanges().catch(() => undefined)
-  }
-
   useImperativeHandle(ref, () => ({
-    hasUnsavedChanges: () => hasUnsavedConnectionChanges,
-    saveChanges: saveConnectionChanges,
-    discardChanges: cancelConnectionChanges,
-  }), [hasUnsavedConnectionChanges, draftConnectionsByTarget, connectionsByTarget])
+    hasUnsavedChanges: () => false,
+    saveChanges: async () => undefined,
+    discardChanges: () => undefined,
+  }), [])
 
   const measureConnectionLinks = () => {
     const canvasElement = canvasRef.current
@@ -196,7 +90,7 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
       const targetRect = targetElement.getBoundingClientRect()
       const targetY = targetRect.top + targetRect.height / 2 - canvasRect.top
 
-      ;(draftConnectionsByTarget[target.id] ?? []).forEach((sourceId, linkIndex) => {
+      ;(connectionsByTarget[target.id] ?? []).forEach((sourceId, linkIndex) => {
         const sourceElement = sourceRefs.current[sourceId]
         if (!sourceElement) return
 
@@ -207,7 +101,7 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
           key: `${target.id}-${sourceId}-${linkIndex}`,
           targetY,
           sourceY,
-          isActive: target.id === activeConnectionTargetId || sourceId === draggedSourceId,
+          isActive: target.id === activeConnectionTargetId,
         })
       })
     })
@@ -241,7 +135,7 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
       observer.disconnect()
       window.removeEventListener('resize', measureConnectionLinks)
     }
-  }, [activeConnectionTargetId, draftConnectionsByTarget, draggedSourceId, sourceDefinitions])
+  }, [activeConnectionTargetId, connectionsByTarget, sourceDefinitions])
 
   return (
     <section className="workspace-main-grid connections-workspace-grid">
@@ -250,27 +144,12 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
           <div>
             <p className="section-label">Connections</p>
             <h3>Source connection map</h3>
+            <p>Generated from workflow comparison contracts. These links show the sources currently used by each target.</p>
           </div>
           <div className="sources-registry-actions connections-registry-actions" aria-label="Connection actions">
-            <span className={hasUnsavedConnectionChanges ? 'change-review-status change-review-status-dirty' : 'change-review-status'}>
-              {hasUnsavedConnectionChanges ? `${connectionChanges.length} unsaved changes` : 'No unsaved changes'}
+            <span className="change-review-status">
+              Generated from comparison
             </span>
-            <button
-              type="button"
-              className="secondary-button source-action-button"
-              onClick={cancelConnectionChanges}
-              disabled={!hasUnsavedConnectionChanges || connectionSavePending}
-            >
-              Cancel changes
-            </button>
-            <button
-              type="button"
-              className="secondary-button source-action-button"
-              onClick={() => setImpactReviewOpen(true)}
-              disabled={!hasUnsavedConnectionChanges || connectionSavePending}
-            >
-              Save changes
-            </button>
           </div>
         </div>
 
@@ -300,9 +179,8 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
             </div>
             <div className="connection-target-list">
               {connectionTargets.map((target) => {
-                const connectedIds = (draftConnectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId))
+                const connectedIds = (connectionsByTarget[target.id] ?? []).filter((sourceId) => sourceById.has(sourceId))
                 const isActive = target.id === activeConnectionTargetId
-                const isDropTarget = Boolean(draggedSourceId)
 
                 return (
                   <button
@@ -312,10 +190,8 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
                       else delete targetRefs.current[target.id]
                     }}
                     type="button"
-                    className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''} ${isDropTarget ? 'connection-target-node-drop' : ''}`}
+                    className={`connection-target-node ${isActive ? 'connection-target-node-active' : ''}`}
                     onClick={() => onSelectConnectionTarget(target.id)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => dropSourceOnTarget(event, target.id)}
                   >
                     <span className="connection-node-main">
                       <strong>{target.label}</strong>
@@ -347,6 +223,7 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
             <div className="connection-source-list">
               {sourceDefinitions.map((source) => {
                 const connectedToActive = activeSourceIds.includes(source.id)
+                const activeConnectionRole = connectionRolesByTarget?.[activeTarget.id]?.[source.id] ?? null
                 const statusToken = getStatusToken(source.status)
                 const appIcon = getSourceAppIcon(source)
 
@@ -358,13 +235,6 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
                       else delete sourceRefs.current[source.id]
                     }}
                     className={`connection-source-node ${connectedToActive ? 'connection-source-node-active' : ''}`}
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData('text/plain', source.id)
-                      event.dataTransfer.effectAllowed = 'copy'
-                      setDraggedSourceId(source.id)
-                    }}
-                    onDragEnd={() => setDraggedSourceId(null)}
                   >
                     <span
                       className={`connection-source-app-icon connection-source-app-icon-${appIcon.tone}`}
@@ -398,20 +268,17 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
                           <span className="source-status-dot" />
                           {source.status}
                         </span>
+                        {activeConnectionRole ? (
+                          <span className="connection-source-role">{activeConnectionRole}</span>
+                        ) : null}
                       </div>
                     </div>
                     <button
                       type="button"
                       className={`connection-node-action ${connectedToActive ? 'connection-node-action-remove' : ''}`}
-                      onClick={() => {
-                        if (connectedToActive) {
-                          updateDraftConnection(activeTarget.id, source.id, 'disconnect')
-                        } else {
-                          updateDraftConnection(activeTarget.id, source.id, 'connect')
-                        }
-                      }}
+                      disabled
                     >
-                      {connectedToActive ? 'Disconnect' : 'Connect'}
+                      {connectedToActive ? 'Linked' : 'Available'}
                     </button>
                   </article>
                 )
@@ -420,7 +287,7 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
               {sourceDefinitions.length === 0 ? (
                 <div className="connections-empty-state">
                   <h4>No sources available</h4>
-                  <p>Add sources first, then return here to create connections.</p>
+                  <p>Add sources first, then run workflow validation and comparison to generate connections.</p>
                 </div>
               ) : null}
             </div>
@@ -428,57 +295,6 @@ export const ConnectionsStep = forwardRef<ConnectionsStepHandle, ConnectionsStep
         </div>
       </section>
 
-      {impactReviewOpen ? (
-        <div className="impact-modal-overlay" role="dialog" aria-modal="true" aria-label="Connection impact review">
-          <div className="impact-modal">
-            <div className="impact-modal-header">
-              <p className="section-label">Impact review</p>
-              <h3>Confirm connection changes</h3>
-              <p>These connection changes will be saved as one update after confirmation.</p>
-            </div>
-
-            <dl className="impact-summary-list">
-              <div>
-                <dt>Changes</dt>
-                <dd>{connectionChanges.length}</dd>
-              </div>
-              <div>
-                <dt>Added</dt>
-                <dd>{connectionChanges.filter((change) => change.action === 'added').length}</dd>
-              </div>
-              <div>
-                <dt>Removed</dt>
-                <dd>{connectionChanges.filter((change) => change.action === 'removed').length}</dd>
-              </div>
-              <div>
-                <dt>BOM impact</dt>
-                <dd>{bomConnectionChanges.length ? `${bomConnectionChanges.length} BOM changes can affect BOM analysis.` : 'No direct BOM target impact.'}</dd>
-              </div>
-            </dl>
-
-            <div className="impact-change-list" aria-label="Connection changes">
-              {connectionChanges.map((change) => (
-                <div key={`${change.action}-${change.targetId}-${change.sourceId}`} className="impact-change-row">
-                  <strong>{change.action === 'added' ? 'Add' : 'Remove'}</strong>
-                  <span>{change.targetLabel}</span>
-                  <span>{change.sourceLabel}</span>
-                </div>
-              ))}
-            </div>
-
-            {connectionSaveError ? <p className="impact-error">{connectionSaveError}</p> : null}
-
-            <div className="impact-modal-actions">
-              <button type="button" className="secondary-button" onClick={() => setImpactReviewOpen(false)} disabled={connectionSavePending}>
-                Cancel
-              </button>
-              <button type="button" className="primary-button" onClick={() => { void confirmConnectionChanges() }} disabled={connectionSavePending}>
-                {connectionSavePending ? 'Saving...' : 'Confirm and save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </section>
   )
 })

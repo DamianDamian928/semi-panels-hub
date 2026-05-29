@@ -22,8 +22,8 @@ import type {
   PersistenceState,
   ProcessStep,
   ReviewIssue,
-  ReviewIssueFilter,
   SourceCreateInput,
+  SourceConnectionRolesByTarget,
   SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
@@ -45,24 +45,41 @@ import {
 import { ConnectionsStep, type ConnectionsStepHandle } from './steps/ConnectionsStep'
 import { DecisionsStep } from './steps/DecisionsStep'
 import { OutputStep } from './steps/OutputStep'
-import { ReviewStep } from './steps/ReviewStep'
 import { SourcesStep } from './steps/SourcesStep'
 
 const activeStepByStatus: Record<DashboardRow['status'], ProcessStep> = {
   Draft: 'Sources',
-  'In progress': 'Review',
-  Completed: 'Output',
+  'In progress': 'Comparison',
+  Completed: 'Decisions',
 }
 
+const createDecisionRecordFromComparisonIssue = (issue: ReviewIssue): DecisionRecord => ({
+  issueId: issue.id,
+  issueTitle: issue.title,
+  area: issue.area,
+  status: 'Required',
+  proposedDecision: issue.suggestedAction,
+  rationale: issue.description,
+  outputImpact: issue.severity === 'High'
+    ? 'Blocks output'
+    : issue.severity === 'Medium'
+      ? 'Affects output'
+      : 'No output impact yet',
+  auditState: 'Not persisted',
+  owner: issue.owner,
+  updated: 'Just now',
+  source: issue.source,
+  comparedWith: issue.comparedWith,
+})
+
 const nextStepByProcess: Record<ProcessStep, { title: string; description: string }> = {
-  Sources: { title: 'Connections', description: 'Assign read-only sources to the review stages.' },
-  Connections: { title: 'Validation', description: 'Check source readiness before comparison.' },
-  Validation: { title: 'Comparison', description: 'Compare validated data and detect review issues.' },
-  Comparison: { title: 'Review', description: 'Triage differences and mark items that need decisions.' },
-  Review: { title: 'Decisions', description: 'Create auditable decision records for selected issues.' },
-  Decisions: { title: 'Output', description: 'Prepare final artifacts from accepted decisions.' },
-  Output: { title: 'AI Assistant', description: 'Use assistant context once the workflow data is stable.' },
-  'AI Assistant': { title: 'Sources', description: 'Return to the source registry.' },
+  Sources: { title: 'Connections', description: 'Review source relationships as workflow context.' },
+  Connections: { title: 'Validation', description: 'Review source readiness before comparison.' },
+  Validation: { title: 'Comparison', description: 'Compare validated data and detect decision findings.' },
+  Comparison: { title: 'Decisions', description: 'Create auditable decision records from comparison findings.' },
+  Decisions: { title: 'Dashboard review', description: 'Decision data will feed the future Dashboard Open review.' },
+  Output: { title: 'AI Assistant', description: 'This area stays planned while Decision and Open review are defined.' },
+  'AI Assistant': { title: 'Sources', description: 'This area stays planned while workflow data is stabilized.' },
 }
 
 const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
@@ -78,53 +95,43 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   },
   Connections: {
     eyebrow: 'Connections',
-    title: 'Global source assignment',
-    summary: 'This global screen assigns source cards to workflow targets used by all reviews.',
-    goal: 'Connect the right source set to the right stage.',
-    function: 'Maps global sources into BOM, Documentation and Costing areas before project-specific checks run.',
-    yourRole: 'Choose which inputs belong to each stage.',
-    example: 'Parts&BOM and Fishbowl can be assigned to BOM stages.',
-    output: 'Workflow targets know which global sources they should use.',
+    title: 'Generated source usage map',
+    summary: 'This screen shows source-to-target relationships generated from active workflow comparison contracts.',
+    goal: 'Understand which real sources are used by each workflow target.',
+    function: 'Displays the current source usage detected by validation and comparison rules.',
+    yourRole: 'Review whether the generated usage map matches the expected workflow context.',
+    example: 'BOM Matvar shows the BOM L0 and Mass Production sources selected by the comparison contract.',
+    output: 'Read-only source usage context for validation, comparison and decisions.',
   },
   Validation: {
     eyebrow: 'Validation',
     title: 'Current review input readiness',
-    summary: 'This screen checks whether connected inputs are ready for the selected review only.',
-    goal: 'Find blocking input problems early.',
-    function: 'Separates errors, warnings and unchecked sources.',
-    yourRole: 'Decide whether the process can continue.',
-    example: 'Fix source errors before running comparisons.',
-    output: 'A readiness signal for the next step.',
+    summary: 'This screen shows source readiness and validation status for the selected review.',
+    goal: 'Show the status of available source data.',
+    function: 'Separates errors, warnings and unchecked source conditions.',
+    yourRole: 'Review status before reading Comparison results.',
+    example: 'Source files can be ready while individual data contracts still warn.',
+    output: 'Informational validation status for Comparison.',
   },
   Comparison: {
     eyebrow: 'Comparison',
     title: 'Current review difference detection',
-    summary: 'This screen previews how source differences become review-ready issues for the selected review.',
+    summary: 'This screen previews how source differences become decision-ready findings for the selected review.',
     goal: 'Detect meaningful differences.',
     function: 'Groups comparison results and source context.',
-    yourRole: 'Look for differences that should become review issues.',
-    example: 'A missing documentation link becomes a high severity issue.',
-    output: 'Issues ready for review triage.',
-  },
-  Review: {
-    eyebrow: 'Review',
-    title: 'Current review issue triage',
-    summary: 'This is the main issue triage workspace for the selected review before decisions are created.',
-    goal: 'Decide which issues need a formal decision.',
-    function: 'Keeps issue detection separate from decisions.',
-    yourRole: 'Mark issues for decision or continue reviewing.',
-    example: 'A mismatch can be marked as requiring a decision.',
-    output: 'A curated list of issues needing decisions.',
+    yourRole: 'Look for differences that should become decisions.',
+    example: 'A missing expected match becomes a decision candidate.',
+    output: 'Findings ready for Decisions.',
   },
   Decisions: {
     eyebrow: 'Decisions',
     title: 'Current review decisions',
-    summary: 'This screen manages decision records linked to issues from the selected review.',
+    summary: 'This screen manages decision records linked to comparison findings from the selected review.',
     goal: 'Keep decisions separate from source data.',
     function: 'Records accepted, drafted, required and deferred decisions.',
     yourRole: 'Accept or draft decisions based on review context.',
-    example: 'Accepting a decision can unblock output readiness.',
-    output: 'Decision records that drive output artifacts.',
+    example: 'Accepting a decision confirms what should happen with comparison data.',
+    output: 'Decision records ready for the future Dashboard Open review.',
   },
   Output: {
     eyebrow: 'Output',
@@ -152,12 +159,10 @@ type ReviewEditorProps = {
   selectedReview: DashboardRow
   sourceDefinitions: SourceDefinition[]
   validationStatesBySource: Record<string, { state: ValidationState; message: string }>
-  reviewIssues: ReviewIssue[]
   decisionRecords: DecisionRecord[]
   outputItems: OutputItem[]
   auditEvents: AuditEvent[]
   issueDecisionStates: Record<string, DecisionState>
-  issuePersistenceStates: Record<string, PersistenceState>
   decisionStatuses: Record<string, DecisionStatus>
   decisionPersistenceStates: Record<string, PersistenceState>
   outputStatuses: Record<string, OutputStatus>
@@ -169,13 +174,13 @@ type ReviewEditorProps = {
   apiConnectionState: ApiConnectionState
   apiConnectionError: string | null
   sourceConnectionsByTarget: SourceConnectionsByTarget | null
+  sourceConnectionRolesByTarget: SourceConnectionRolesByTarget | null
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
   deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
   checkSourceAccess: (sourceId: string) => Promise<void>
-  saveSourceConnections: (connectionsByTarget: SourceConnectionsByTarget) => Promise<void>
-  markIssueForDecision: (issue: ReviewIssue) => Promise<void>
+  refreshBootstrapData: () => Promise<void>
   saveDecisionStatus: (decision: DecisionRecord, status: DecisionStatus) => Promise<void>
   savePreparedOutput: (outputItem: OutputRow) => Promise<void>
   onBackToDashboard: () => void
@@ -188,11 +193,9 @@ type PendingExitNavigation =
 export function ReviewEditor({
   selectedReview,
   sourceDefinitions,
-  reviewIssues,
   decisionRecords,
   outputItems,
   issueDecisionStates,
-  issuePersistenceStates,
   decisionStatuses,
   decisionPersistenceStates,
   outputStatuses,
@@ -200,21 +203,18 @@ export function ReviewEditor({
   apiConnectionState,
   apiConnectionError,
   sourceConnectionsByTarget,
+  sourceConnectionRolesByTarget,
   createSource,
   deleteSource,
   registerSourceLocalFile,
   checkSourcesAccess,
   checkSourceAccess,
-  saveSourceConnections,
-  markIssueForDecision,
+  refreshBootstrapData,
   saveDecisionStatus,
   savePreparedOutput,
   onBackToDashboard,
 }: ReviewEditorProps) {
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStep>(activeStepByStatus[selectedReview.status])
-  const [activeReviewIssueId, setActiveReviewIssueId] = useState<string>(reviewIssues[0]?.id ?? '')
-  const [reviewIssueFilter, setReviewIssueFilter] = useState<ReviewIssueFilter>('All')
-  const [activeDecisionIssueId, setActiveDecisionIssueId] = useState<string>(decisionRecords[0]?.issueId ?? '')
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('All')
   const [activeDecisionTargetId, setActiveDecisionTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [activeOutputItemId, setActiveOutputItemId] = useState<string>(outputItems[0]?.id ?? '')
@@ -225,7 +225,6 @@ export function ReviewEditor({
   const [validationRefreshKey, setValidationRefreshKey] = useState(0)
   const [activeComparisonTargetId, setActiveComparisonTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [comparisonRefreshKey, setComparisonRefreshKey] = useState(0)
-  const [activeReviewTargetId, setActiveReviewTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [reviewIssuesRefreshKey, setReviewIssuesRefreshKey] = useState(0)
   const [pendingExitNavigation, setPendingExitNavigation] = useState<PendingExitNavigation | null>(null)
   const [exitGuardSaving, setExitGuardSaving] = useState(false)
@@ -258,11 +257,9 @@ export function ReviewEditor({
     activeConnectionTargetId,
     setActiveConnectionTargetId,
     connectionsByTarget,
-    saveConnectionsByTarget,
   } = useSourceConnections({
     sourceDefinitions,
     sourceConnectionsByTarget,
-    saveSourceConnections,
   })
   const {
     storageStatus,
@@ -273,7 +270,6 @@ export function ReviewEditor({
     () => JSON.stringify({
       reviewId: selectedReview.id,
       reviewCells: selectedReview.dashboardCells ?? null,
-      connectionsByTarget,
       sources: sourceDefinitions.map((source) => ({
         id: source.id,
         name: source.name,
@@ -286,8 +282,10 @@ export function ReviewEditor({
             }
           : null,
       })),
+      sourceConnectionsByTarget,
+      sourceConnectionRolesByTarget,
     }),
-    [connectionsByTarget, selectedReview.dashboardCells, selectedReview.id, sourceDefinitions],
+    [selectedReview.dashboardCells, selectedReview.id, sourceConnectionRolesByTarget, sourceConnectionsByTarget, sourceDefinitions],
   )
   const {
     bomMatvarValidation,
@@ -313,15 +311,30 @@ export function ReviewEditor({
   )
   const {
     bomMatvarReviewIssues,
-    bomMatvarReviewIssuesLoading,
-    bomMatvarReviewIssuesError,
-    refreshBomMatvarReviewIssues,
   } = useBomMatvarReviewIssues(
     selectedReview.id,
-    currentProcessStep === 'Review' || currentProcessStep === 'Decisions' || currentProcessStep === 'Output',
+    currentProcessStep === 'Decisions' || currentProcessStep === 'Output',
     reviewIssuesRefreshKey,
     validationInputSignature,
   )
+  const comparisonIssues = bomMatvarReviewIssues?.issues ?? []
+  const refreshComparisonAndDependencies = async () => {
+    try {
+      await refreshBomMatvarComparison()
+      await refreshBomMatvarValidation()
+      await refreshBootstrapData()
+    } catch {
+      // API status is already surfaced by the shared workflow data hook.
+    }
+  }
+  const decisionRecordsFromComparison = useMemo(() => {
+    const existingDecisionIssueIds = new Set(decisionRecords.map((record) => record.issueId))
+    const generatedDecisionRecords = comparisonIssues
+      .filter((issue) => !existingDecisionIssueIds.has(issue.id))
+      .map(createDecisionRecordFromComparisonIssue)
+
+    return [...decisionRecords, ...generatedDecisionRecords]
+  }, [comparisonIssues, decisionRecords])
   const nextStep = nextStepByProcess[currentProcessStep]
   const purposeContent = stepPurposeContent[currentProcessStep]
   const guardedStepLabel = currentProcessStep === 'Connections'
@@ -347,8 +360,10 @@ export function ReviewEditor({
     }
     if (navigation.step === 'Comparison') {
       setComparisonRefreshKey((current) => current + 1)
+      setValidationRefreshKey((current) => current + 1)
+      void refreshBootstrapData().catch(() => undefined)
     }
-    if (navigation.step === 'Review') {
+    if (navigation.step === 'Decisions') {
       setReviewIssuesRefreshKey((current) => current + 1)
     }
 
@@ -362,8 +377,10 @@ export function ReviewEditor({
       }
       if (navigation.step === 'Comparison') {
         setComparisonRefreshKey((current) => current + 1)
+        setValidationRefreshKey((current) => current + 1)
+        void refreshBootstrapData().catch(() => undefined)
       }
-      if (navigation.step === 'Review') {
+      if (navigation.step === 'Decisions') {
         setReviewIssuesRefreshKey((current) => current + 1)
       }
       return
@@ -482,14 +499,6 @@ export function ReviewEditor({
     const validation = bomMatvarValidation
     const checks = validation?.checks ?? []
     const bomMatvarChecks = checks.filter((check) => check.source !== 'Dashboard')
-    const bomL0Rows = validation?.bomL0Rows ?? []
-    const matvarRows = validation?.matvarRows ?? []
-    const matvarSourceLabel = matvarRows[0]
-      ? [matvarRows[0].sourceName, matvarRows[0].sourceSheet].filter(Boolean).join(' / ')
-      : ''
-    const bomL0SourceLabel = bomL0Rows[0]
-      ? [bomL0Rows[0].sourceName, bomL0Rows[0].sourceSheet].filter(Boolean).join(' / ')
-      : ''
     const activeValidationTarget = connectionTargets.find((target) => target.id === activeValidationTargetId) ?? connectionTargets[0]
     const activeTargetSourceCount = connectionsByTarget[activeValidationTarget.id]?.length ?? 0
     const summary = validation?.summary ?? {
@@ -505,7 +514,7 @@ export function ReviewEditor({
     }
     const validationStatus: ValidationState = validation?.status ?? 'Not checked'
     const dashboardChecks = checks.filter((check) =>
-      check.source === 'Dashboard' || check.id === 'bom-matvar-connections')
+      check.source === 'Dashboard' || check.id === 'bom-matvar-source-context')
     const dashboardValidationStatus: ValidationState = dashboardChecks.some((check) => check.status === 'Error')
       ? 'Error'
       : dashboardChecks.some((check) => check.status === 'Warning')
@@ -571,7 +580,7 @@ export function ReviewEditor({
             {bomMatvarValidationLoading && !validation ? (
               <div className="source-registry-empty">
                 <strong>Loading validation</strong>
-                <p>Reading dashboard context and connected BOM Matvar sources.</p>
+                <p>Reading dashboard context and available BOM Matvar source status.</p>
               </div>
             ) : dashboardChecks.length ? (
               <div className="table-wrap">
@@ -626,7 +635,7 @@ export function ReviewEditor({
 
             <div className="source-summary-grid" aria-label={`${activeValidationTarget.label} validation summary`}>
               <article className="source-summary-card">
-                <span>Connected sources</span>
+                <span>Context links</span>
                 <strong>{activeTargetSourceCount}</strong>
               </article>
               <article className="source-summary-card">
@@ -657,7 +666,7 @@ export function ReviewEditor({
             <div>
               <p className="section-label">Validation</p>
               <h3>BOM Matvar validation</h3>
-              <p>Checks connected BOM Matvar sources and builds the first BOM L0 context for the selected review.</p>
+              <p>Shows available BOM Matvar source status and builds the first BOM L0 context for the selected review.</p>
             </div>
             <div className="sources-registry-actions mapping-registry-actions" aria-label="Validation actions">
               <span className={validationStateClassName[validationStatus]}>{validationStatus}</span>
@@ -676,7 +685,7 @@ export function ReviewEditor({
 
           <div className="source-summary-grid" aria-label="BOM Matvar validation summary">
             <article className="source-summary-card">
-              <span>Connected sources</span>
+              <span>Available sources</span>
               <strong>{summary.connectedSources}</strong>
             </article>
             <article className="source-summary-card">
@@ -699,7 +708,7 @@ export function ReviewEditor({
           {bomMatvarValidationLoading && !validation ? (
             <div className="source-registry-empty">
               <strong>Loading validation</strong>
-              <p>Reading saved connections and source contracts for BOM L0 and Mass Production.</p>
+              <p>Reading available source contracts for BOM L0 and Mass Production.</p>
             </div>
           ) : bomMatvarChecks.length ? (
             <div className="table-wrap">
@@ -731,100 +740,10 @@ export function ReviewEditor({
           ) : (
             <div className="source-registry-empty">
               <strong>No validation data</strong>
-              <p>Refresh validation after BOM Matvar source connections are saved.</p>
+              <p>Refresh validation after source files are available.</p>
             </div>
           )}
 
-          <p className="source-detail-section-title">
-            MATVAR - Semi Panels List{matvarSourceLabel ? ` (${matvarSourceLabel})` : ''}
-          </p>
-          {matvarRows.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Item</th>
-                    <th>ORACLE Item Description</th>
-                    <th>INTEL Description</th>
-                    <th>Phantom L1</th>
-                    <th>Scope</th>
-                    <th>Weryfikacja Matvar</th>
-                    <th>Rule basis</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {matvarRows.map((row, index) => (
-                    <tr key={`${row.scope}-${row.item || row.expectedPhantomL1 || index}`}>
-                      <td title={[row.sourcePath, row.sourceSheet].filter(Boolean).join(' / ')}>
-                        {[row.sourceName, row.sourceSheet].filter(Boolean).join(' / ')}
-                      </td>
-                      <td>{row.item}</td>
-                      <td>{row.oracleItemDescription}</td>
-                      <td>{row.intelDescription}</td>
-                      <td title={row.expectedPhantomL1 ? `Expected: ${row.expectedPhantomL1}` : undefined}>
-                        {row.phantomL1}
-                      </td>
-                      <td>{row.scope}</td>
-                      <td>
-                        {row.verificationText ? (
-                          <span className={validationStateClassName[row.verificationStatus === 'OK' ? 'Valid' : 'Error']}>
-                            {row.verificationText}
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="source-registry-empty">
-              <strong>No MATVAR rows</strong>
-              <p>MATVAR rows will appear here when the connected Mass Production workbook contains Semi Panels List rows for this review.</p>
-            </div>
-          )}
-
-          <p className="source-detail-section-title">
-            BOM L0 matched rows{bomL0SourceLabel ? ` (${bomL0SourceLabel})` : ''}
-          </p>
-          {bomL0Rows.length ? (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Part Number</th>
-                    <th>Description</th>
-                    <th>Data aktualizacji</th>
-                    <th>PN check</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bomL0Rows.map((row) => (
-                    <tr key={`${row.partNumber}-${row.description}`}>
-                      <td title={[row.sourcePath, row.sourceSheet].filter(Boolean).join(' / ')}>
-                        {[row.sourceName, row.sourceSheet].filter(Boolean).join(' / ')}
-                      </td>
-                      <td>{row.partNumber}</td>
-                      <td>{row.description}</td>
-                      <td title={row.updatedAtRaw}>{row.updatedAt}</td>
-                      <td>
-                        <span className={validationStateClassName[row.partNumberValid ? 'Valid' : 'Warning']}>
-                          {row.partNumberValid ? 'Valid' : 'Warning'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="source-registry-empty">
-              <strong>No BOM L0 matches</strong>
-              <p>Matched rows will appear here when BOM L0 Description contains the review Intel Description.</p>
-            </div>
-          )}
         </>
       )
     }
@@ -877,6 +796,9 @@ export function ReviewEditor({
     const comparisonStatus: ValidationState = comparison?.status ?? 'Not checked'
     const rules = comparison?.rules ?? []
     const matvarRules = comparison?.matvarRules ?? []
+    const bomL0RulesSourceLabel = rules[0]?.partNumber
+      ? 'BOM L0.xlsx / Arkusz1'
+      : ''
     const matvarRulesSourceLabel = matvarRules[0]
       ? [matvarRules[0].sourceName, matvarRules[0].sourceSheet].filter(Boolean).join(' / ')
       : ''
@@ -915,7 +837,7 @@ export function ReviewEditor({
 
             <div className="source-summary-grid" aria-label={`${activeComparisonTarget.label} comparison summary`}>
               <article className="source-summary-card">
-                <span>Connected sources</span>
+                <span>Context links</span>
                 <strong>{activeTargetSourceCount}</strong>
               </article>
               <article className="source-summary-card">
@@ -946,7 +868,7 @@ export function ReviewEditor({
             <div>
               <p className="section-label">Comparison</p>
               <h3>BOM Matvar comparison</h3>
-              <p>Runs the first BOM L0 scope rules for the selected review before issues are created.</p>
+              <p>Runs the first BOM L0 scope rules for the selected review before decisions are created.</p>
             </div>
             <div className="sources-registry-actions mapping-registry-actions" aria-label="Comparison actions">
               <span className={validationStateClassName[comparisonStatus]}>{comparisonStatus}</span>
@@ -954,7 +876,7 @@ export function ReviewEditor({
                 type="button"
                 className="secondary-button source-action-button"
                 onClick={() => {
-                  void refreshBomMatvarComparison()
+                  void refreshComparisonAndDependencies()
                 }}
                 disabled={bomMatvarComparisonLoading}
               >
@@ -984,14 +906,16 @@ export function ReviewEditor({
 
           {bomMatvarComparisonError ? <p className="impact-error">{bomMatvarComparisonError}</p> : null}
 
-          <p className="source-detail-section-title">Comparison rules</p>
+          <p className="source-detail-section-title">
+            BOM L0 rules{bomL0RulesSourceLabel ? ` (${bomL0RulesSourceLabel})` : ''}
+          </p>
           {bomMatvarComparisonLoading && !comparison ? (
             <div className="source-registry-empty">
               <strong>Loading comparison</strong>
               <p>Reading current BOM Matvar validation context and applying BOM L0 rules.</p>
             </div>
           ) : rules.length ? (
-            <div className="table-wrap">
+            <div className="table-wrap comparison-table-wrap">
               <table>
                 <thead>
                   <tr>
@@ -1001,7 +925,8 @@ export function ReviewEditor({
                     <th>Result</th>
                     <th>Part Number</th>
                     <th>Description</th>
-                    <th>Message</th>
+                    <th>Data aktualizacji</th>
+                    <th>Rules</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1015,7 +940,14 @@ export function ReviewEditor({
                       <td>{rule.result}</td>
                       <td>{rule.partNumber || '-'}</td>
                       <td>{rule.description || '-'}</td>
-                      <td>{rule.message}</td>
+                      <td title={rule.updatedAtRaw || undefined}>{rule.updatedAt || '-'}</td>
+                      <td>
+                        <div className="comparison-rule-basis">
+                          {(Array.isArray(rule.ruleBasis) ? rule.ruleBasis : [rule.ruleBasis]).map((line) => (
+                            <span key={line}>{line}</span>
+                          ))}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1032,7 +964,7 @@ export function ReviewEditor({
             MATVAR rules{matvarRulesSourceLabel ? ` (${matvarRulesSourceLabel})` : ''}
           </p>
           {matvarRules.length ? (
-            <div className="table-wrap">
+            <div className="table-wrap comparison-table-wrap">
               <table>
                 <thead>
                   <tr>
@@ -1045,6 +977,7 @@ export function ReviewEditor({
                     <th>Phantom L1</th>
                     <th>Scope</th>
                     <th>Weryfikacja Matvar</th>
+                    <th>Rules</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1061,7 +994,13 @@ export function ReviewEditor({
                       <td>{rule.phantomL1 || '-'}</td>
                       <td>{rule.scope || '-'}</td>
                       <td>{rule.verificationText || '-'}</td>
-                      <td>{rule.message}</td>
+                      <td>
+                        <div className="comparison-rule-basis">
+                          {(Array.isArray(rule.message) ? rule.message : [rule.message]).map((line) => (
+                            <span key={line}>{line}</span>
+                          ))}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1149,66 +1088,30 @@ export function ReviewEditor({
           ref={connectionsStepRef}
           activeConnectionTargetId={activeConnectionTargetId}
           connectionsByTarget={connectionsByTarget}
+          connectionRolesByTarget={sourceConnectionRolesByTarget}
           sourceDefinitions={sourceDefinitions}
           onSelectConnectionTarget={setActiveConnectionTargetId}
-          onSaveConnections={saveConnectionsByTarget}
         />
       )
     }
     if (currentProcessStep === 'Validation') return renderValidationStep()
     if (currentProcessStep === 'Comparison') return renderComparisonStep()
-    if (currentProcessStep === 'Review') {
-      const reviewIssuesFromComparison = bomMatvarReviewIssues?.issues ?? []
-
-      return (
-        <ReviewStep
-          selectedReview={selectedReview}
-          reviewIssues={reviewIssuesFromComparison}
-          decisionRecords={decisionRecords}
-          issueDecisionStates={issueDecisionStates}
-          issuePersistenceStates={issuePersistenceStates}
-          decisionStatuses={decisionStatuses}
-          decisionPersistenceStates={decisionPersistenceStates}
-          activeReviewIssueId={activeReviewIssueId}
-          reviewIssueFilter={reviewIssueFilter}
-          activeReviewTargetId={activeReviewTargetId}
-          connectionTargets={connectionTargets}
-          connectionsByTarget={connectionsByTarget}
-          reviewIssueDataLabel="BOM Matvar comparison"
-          reviewIssueLoading={bomMatvarReviewIssuesLoading}
-          reviewIssueError={bomMatvarReviewIssuesError}
-          onSelectReviewIssue={setActiveReviewIssueId}
-          onSetReviewIssueFilter={setReviewIssueFilter}
-          onSelectReviewTarget={setActiveReviewTargetId}
-          onRefreshReviewIssues={() => {
-            void refreshBomMatvarReviewIssues()
-          }}
-          onMarkIssueForDecision={markIssueForDecision}
-          onSetActiveDecisionIssue={setActiveDecisionIssueId}
-          onSetDecisionFilterAll={() => setDecisionFilter('All')}
-          onSetProcessStep={requestProcessStepChange}
-        />
-      )
-    }
     if (currentProcessStep === 'Decisions') {
       return (
         <DecisionsStep
           selectedReview={selectedReview}
-          reviewIssues={bomMatvarReviewIssues?.issues ?? []}
-          decisionRecords={decisionRecords}
+          reviewIssues={comparisonIssues}
+          comparison={bomMatvarComparison}
+          decisionRecords={decisionRecordsFromComparison}
           issueDecisionStates={issueDecisionStates}
           decisionStatuses={decisionStatuses}
           decisionPersistenceStates={decisionPersistenceStates}
-          activeDecisionIssueId={activeDecisionIssueId}
           decisionFilter={decisionFilter}
           activeDecisionTargetId={activeDecisionTargetId}
           connectionTargets={connectionTargets}
           connectionsByTarget={connectionsByTarget}
-          onSelectDecisionIssue={setActiveDecisionIssueId}
-          onSelectReviewIssue={setActiveReviewIssueId}
           onSelectDecisionTarget={setActiveDecisionTargetId}
           onSetDecisionFilter={setDecisionFilter}
-          onSetReviewIssueFilter={setReviewIssueFilter}
           onSetProcessStep={requestProcessStepChange}
           onSaveDecisionStatus={saveDecisionStatus}
         />
@@ -1220,7 +1123,7 @@ export function ReviewEditor({
     return (
       <OutputStep
         selectedReview={selectedReview}
-        decisionRecords={decisionRecords}
+        decisionRecords={decisionRecordsFromComparison}
         issueDecisionStates={issueDecisionStates}
         decisionStatuses={decisionStatuses}
         outputStatuses={outputStatuses}
@@ -1266,8 +1169,6 @@ export function ReviewEditor({
             const isActive = step === currentProcessStep
             return (
               <Fragment key={step}>
-                {step === 'Sources' ? <span className="review-nav-group">Global setup</span> : null}
-                {step === 'Validation' ? <span className="review-nav-group">Current review</span> : null}
                 <button
                   type="button"
                   className={`review-nav-item ${isActive ? 'review-nav-item-active' : ''}`}
@@ -1291,7 +1192,7 @@ export function ReviewEditor({
             <p className="eyebrow">Admin project edit</p>
             <h1>{selectedReview.intelModel}</h1>
             <p className="page-subtitle">
-              Sources and Connections are global. Validation to Output are scoped to this review.
+              Sources and Connections provide context. Validation to Decisions are scoped to this review.
             </p>
           </div>
           <div className="header-meta">

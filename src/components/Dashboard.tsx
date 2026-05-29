@@ -273,7 +273,7 @@ export function Dashboard({
                             Edit
                           </button>
                         ) : null}
-                        <button type="button" className="table-action table-action-secondary" disabled title="Open review view is planned.">
+                        <button type="button" className="table-action table-action-secondary" disabled title="Open review view will use Decision data in a future pass.">
                           Open
                         </button>
                       </div>

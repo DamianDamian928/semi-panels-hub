@@ -40,6 +40,7 @@ import type {
   PersistenceState,
   ReviewIssue,
   SourceCreateInput,
+  SourceConnectionRolesByTarget,
   SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
@@ -77,6 +78,8 @@ export const useWorkflowData = () => {
   const [apiConnectionState, setApiConnectionState] = useState<ApiConnectionState>('loading')
   const [apiConnectionError, setApiConnectionError] = useState<string | null>(null)
   const [sourceConnectionsByTarget, setSourceConnectionsByTarget] = useState<SourceConnectionsByTarget | null>(null)
+  const [sourceConnectionRolesByTarget, setSourceConnectionRolesByTarget] =
+    useState<SourceConnectionRolesByTarget | null>(null)
   const [sourceReadStatus, setSourceReadStatus] = useState<SourceReadStatus | null>(null)
 
   const applyWorkflowPayload = (payload: WorkflowPayload) => {
@@ -102,6 +105,7 @@ export const useWorkflowData = () => {
     setSourceDefinitions(data.sources)
     setValidationStatesBySource(data.validationStatesBySource)
     setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
+    setSourceConnectionRolesByTarget(data.sourceConnectionRolesByTarget)
     setSourceReadStatus(data.sourceReadStatus)
     applyWorkflowPayload(data)
   }
@@ -116,6 +120,7 @@ export const useWorkflowData = () => {
     setAuditEvents(fallbackAuditEvents)
     setWorkflowView(null)
     setSourceConnectionsByTarget(null)
+    setSourceConnectionRolesByTarget(null)
     setSourceReadStatus(null)
   }
 
@@ -254,6 +259,7 @@ export const useWorkflowData = () => {
     try {
       const data = await apiSaveSourceConnections(connectionsByTarget)
       setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
+      setSourceConnectionRolesByTarget(data.sourceConnectionRolesByTarget)
       setApiConnectionState('ready')
       setApiConnectionError(null)
     } catch (error: unknown) {
@@ -375,6 +381,7 @@ export const useWorkflowData = () => {
     apiConnectionState,
     apiConnectionError,
     sourceConnectionsByTarget,
+    sourceConnectionRolesByTarget,
     sourceReadStatus,
     refreshBootstrapData,
     createSource,

@@ -1,6 +1,6 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
-export type ProcessStep = 'Sources' | 'Connections' | 'Validation' | 'Comparison' | 'Review' | 'Decisions' | 'Output' | 'AI Assistant'
+export type ProcessStep = 'Sources' | 'Connections' | 'Validation' | 'Comparison' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings' | 'settings-diagnostics' | 'settings-design-template' | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
@@ -9,7 +9,6 @@ export type SidebarIconName =
   | 'connections'
   | 'validation'
   | 'comparison'
-  | 'review'
   | 'decisions'
   | 'output'
   | 'aiAssistant'
@@ -122,6 +121,7 @@ export type ConnectionTarget = {
 }
 
 export type SourceConnectionsByTarget = Record<ConnectionTargetId, string[]>
+export type SourceConnectionRolesByTarget = Record<ConnectionTargetId, Record<string, string>>
 
 export type ConnectionCard = {
   id: string
@@ -138,7 +138,6 @@ export type ValidationState = 'Valid' | 'Warning' | 'Error' | 'Not checked'
 export type ReviewIssueSeverity = 'High' | 'Medium' | 'Low'
 export type ReviewIssueStatus = 'Open' | 'In review' | 'Resolved'
 export type DecisionState = 'None' | 'Required' | 'Drafted' | 'Accepted' | 'Deferred'
-export type ReviewIssueFilter = 'All' | 'Open' | 'Needs decision' | 'Resolved'
 export type DecisionStatus = Exclude<DecisionState, 'None'>
 export type DecisionFilter = 'All' | DecisionStatus
 export type OutputStatus = 'Ready' | 'Blocked' | 'Needs decision' | 'Not persisted'

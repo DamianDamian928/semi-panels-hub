@@ -9,6 +9,7 @@ import type {
   ProcessStep,
   ReviewIssue,
   SourceCreateInput,
+  SourceConnectionRolesByTarget,
   SourceConnectionsByTarget,
   SourceDefinition,
   SourceFileMetadata,
@@ -195,8 +196,11 @@ export type BomMatvarComparisonPayload = {
     result: string
     partNumber: string
     description: string
+    updatedAtRaw: string
+    updatedAt: string
     status: 'OK' | 'Fallback' | 'Missing' | 'Context' | 'Info'
     message: string
+    ruleBasis: string[]
   }>
   matvarRules: Array<{
     id: string
@@ -213,7 +217,7 @@ export type BomMatvarComparisonPayload = {
     scope: string
     verificationText: string
     status: 'OK' | 'Missing' | 'Mismatch' | 'Context'
-    message: string
+    message: string[]
   }>
 }
 
@@ -300,6 +304,7 @@ type BootstrapResponse = WorkflowPayload & {
   sources: SourceDefinition[]
   validationStatesBySource: Record<string, { state: ValidationState; message: string }>
   sourceConnectionsByTarget: SourceConnectionsByTarget | null
+  sourceConnectionRolesByTarget: SourceConnectionRolesByTarget | null
   sourceReadStatus: SourceReadStatus
 }
 

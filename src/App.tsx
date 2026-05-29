@@ -65,12 +65,10 @@ export default function App() {
         selectedReview={selectedReview}
         sourceDefinitions={workflowData.sourceDefinitions}
         validationStatesBySource={workflowData.validationStatesBySource}
-        reviewIssues={workflowData.reviewIssues}
         decisionRecords={workflowData.decisionRecords}
         outputItems={workflowData.outputItems}
         auditEvents={workflowData.auditEvents}
         issueDecisionStates={workflowData.issueDecisionStates}
-        issuePersistenceStates={workflowData.issuePersistenceStates}
         decisionStatuses={workflowData.decisionStatuses}
         decisionPersistenceStates={workflowData.decisionPersistenceStates}
         outputStatuses={workflowData.outputStatuses}
@@ -82,13 +80,13 @@ export default function App() {
         apiConnectionState={workflowData.apiConnectionState}
         apiConnectionError={workflowData.apiConnectionError}
         sourceConnectionsByTarget={workflowData.sourceConnectionsByTarget}
+        sourceConnectionRolesByTarget={workflowData.sourceConnectionRolesByTarget}
         createSource={workflowData.createSource}
         deleteSource={workflowData.deleteSource}
         registerSourceLocalFile={workflowData.registerSourceLocalFile}
         checkSourcesAccess={workflowData.checkSourcesAccess}
         checkSourceAccess={workflowData.checkSourceAccess}
-        saveSourceConnections={workflowData.saveSourceConnections}
-        markIssueForDecision={workflowData.markIssueForDecision}
+        refreshBootstrapData={workflowData.refreshBootstrapData}
         saveDecisionStatus={workflowData.setDecisionStatus}
         savePreparedOutput={workflowData.prepareOutput}
         onBackToDashboard={() => setAppView('dashboard')}

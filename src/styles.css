@@ -4125,6 +4125,76 @@ tbody tr:last-child td {
   border-bottom: 1px solid rgba(126, 145, 168, 0.12);
 }
 
+.comparison-rule-basis {
+  display: grid;
+  gap: 4px;
+}
+
+.comparison-table-wrap {
+  font-family: 'Cascadia Mono', Consolas, 'Roboto Mono', 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(180deg, rgba(9, 17, 27, 0.94), rgba(7, 14, 23, 0.96));
+}
+
+.comparison-table-wrap thead th {
+  padding: 10px 16px;
+  color: #8692a2;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(126, 145, 168, 0.16);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.comparison-table-wrap tbody td {
+  padding: 11px 16px;
+  color: #9ca8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  border-bottom: 1px solid rgba(126, 145, 168, 0.12);
+}
+
+.comparison-table-wrap tbody td:nth-child(2) {
+  color: #d8e1ec;
+  font-weight: 500;
+}
+
+.comparison-table-wrap .status {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #9ca8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.comparison-table-wrap .status-completed {
+  color: #83c99d;
+}
+
+.comparison-table-wrap .status-progress {
+  color: #c8ad62;
+}
+
+.comparison-table-wrap .status-draft {
+  color: #cf8d83;
+}
+
+.comparison-rule-basis span {
+  color: #9ca8b8;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
 .editor-workspace .review-issue-row,
 .editor-workspace .decision-row,
 .editor-workspace .output-row,

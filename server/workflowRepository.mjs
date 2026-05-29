@@ -11,6 +11,7 @@ import {
   sources,
   validationStatesBySource,
 } from './seedData.mjs'
+import { buildSourceConnectionRolesByTarget, buildSourceConnectionsByTarget } from './sourceUsageModel.mjs'
 import { buildWorkflowView } from './workflowViewModel.mjs'
 
 const serverDirectory = dirname(fileURLToPath(import.meta.url))
@@ -214,6 +215,12 @@ const addAuditEvent = (event) => {
 const getSourceConnections = () =>
   getRecord('source_connections', 'default')?.connectionsByTarget ?? null
 
+const getWorkflowSourceConnections = () =>
+  buildSourceConnectionsByTarget(listRecords('sources'))
+
+const getWorkflowSourceConnectionRoles = () =>
+  buildSourceConnectionRolesByTarget(listRecords('sources'))
+
 const saveSourceConnections = (connectionsByTarget) => {
   upsertRecord('source_connections', 'default', {
     connectionsByTarget,
@@ -296,7 +303,7 @@ const getTechnicalStatus = ({ host, port, packageInfo }) => {
       decisions: workflowPayload.decisionRecords.length,
       outputItems: workflowPayload.outputItems.length,
       auditEvents: workflowPayload.auditEvents.length,
-      sourceConnections: Object.values(getSourceConnections() ?? {}).reduce((count, sourceIds) => count + sourceIds.length, 0),
+      sourceConnections: Object.values(getWorkflowSourceConnections()).reduce((count, sourceIds) => count + sourceIds.length, 0),
     },
     workflow: {
       openIssues: workflowView.review.summary.open,
@@ -333,7 +340,7 @@ const getStorageRecordUpdatedAt = (collection, recordId) => {
 
 const getStorageStatus = (step) => {
   const sourcesCount = getCollectionCount('sources')
-  const sourceConnections = getSourceConnections() ?? {}
+  const sourceConnections = getWorkflowSourceConnections()
   const sourceConnectionsCount = Object.values(sourceConnections).reduce((count, sourceIds) => count + sourceIds.length, 0)
 
   const common = {
@@ -356,12 +363,12 @@ const getStorageStatus = (step) => {
       detail: 'Local files are stored as read-only path references.',
     },
     Connections: {
-      storage: 'SQLite',
+      storage: 'Generated',
       subject: 'Connections',
-      persistence: 'Saved after connect or disconnect',
+      persistence: 'Derived from workflow comparison rules',
       records: sourceConnectionsCount,
-      lastUpdated: getStorageRecordUpdatedAt('source_connections', 'default'),
-      detail: 'Target to source links are stored in the backend repository.',
+      lastUpdated: null,
+      detail: 'Target to source links are generated from source contracts used by workflow rules.',
     },
     Validation: {
       storage: 'SQLite',
@@ -448,6 +455,8 @@ export const workflowRepository = {
   updateDecision: (decision) => updateRecord('decision_records', decision.issueId, decision),
   getOutputItem: (outputId) => getRecord('output_items', outputId),
   getSourceConnections,
+  getWorkflowSourceConnections,
+  getWorkflowSourceConnectionRoles,
   saveSourceConnections,
   getDashboardSourceReadStatus,
   saveDashboardSourceReadStatus,
@@ -466,7 +475,8 @@ export const workflowRepository = {
     reviews: listRecords('reviews'),
     sources: listRecords('sources'),
     validationStatesBySource: getValidationStates(),
-    sourceConnectionsByTarget: getSourceConnections(),
+    sourceConnectionsByTarget: getWorkflowSourceConnections(),
+    sourceConnectionRolesByTarget: getWorkflowSourceConnectionRoles(),
     sourceReadStatus: getDashboardSourceReadStatus(),
     ...getWorkflowPayload(),
   }),

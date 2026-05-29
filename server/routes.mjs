@@ -4,6 +4,11 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readExcelPreview, readExcelWorksheet } from './excelPreview.mjs'
+import {
+  buildSourceContractEntries,
+  connectionTargetIds as sourceConnectionTargetIds,
+  findBestSourceEntry,
+} from './sourceUsageModel.mjs'
 import { workflowActions } from './workflowActions.mjs'
 import { workflowRepository } from './workflowRepository.mjs'
 
@@ -91,7 +96,7 @@ const isLocalFilePayload = (file) =>
 
 const sourceTypes = new Set(['File', 'Folder', 'SQL', 'SharePoint', 'Manual export'])
 const sourceUsages = new Set(['BOM', 'Documentation', 'Costing'])
-const connectionTargetIds = new Set(['dashboard', 'bom-matvar', 'bom-l1', 'bom-l2', 'bom-l3', 'documentation', 'costing'])
+const connectionTargetIds = new Set(sourceConnectionTargetIds)
 
 const isSourceCreatePayload = (value) =>
   value &&
@@ -203,26 +208,6 @@ const createValidationCheck = ({ id, label, source = 'BOM Matvar', status, messa
   message,
   detail,
 })
-
-const sourceLooksLikeBomL0 = (source) => {
-  const sourceText = [
-    source?.name,
-    source?.sourceFile?.name,
-    source?.description,
-  ].join(' ').toLowerCase()
-
-  return sourceText.includes('bom l0') || sourceText.includes('bom_l0')
-}
-
-const sourceLooksLikeMatvarBom = (source) => {
-  const sourceText = [
-    source?.name,
-    source?.sourceFile?.name,
-    source?.description,
-  ].join(' ').toLowerCase()
-
-  return sourceText.includes('matvar') || sourceText.includes('mass production')
-}
 
 const readContractRow = (row, columnIndexByName, contractColumns) =>
   Object.fromEntries(Object.entries(contractColumns).map(([field, column]) => [
@@ -417,19 +402,11 @@ const buildBomMatvarValidation = async (reviewId) => {
     return null
   }
 
-  const connectionsByTarget = workflowRepository.getSourceConnections() ?? {}
-  const connectedSourceIds = connectionsByTarget['bom-matvar'] ?? []
+  const connectedSourceIds = workflowRepository.getWorkflowSourceConnections()['bom-matvar'] ?? []
   const connectedSources = connectedSourceIds
     .map((sourceId) => workflowRepository.getSource(sourceId))
     .filter(Boolean)
-  const connectedSourceEntries = connectedSources.map((source) => ({
-    source,
-    contractRole: sourceLooksLikeBomL0(source)
-      ? 'BOM L0'
-      : sourceLooksLikeMatvarBom(source)
-        ? 'Mass Production'
-        : 'Additional source',
-  }))
+  const connectedSourceEntries = buildSourceContractEntries(connectedSources)
   const checks = []
   const intelDescription = getReviewIntelDescription(review).trim()
   const buildConnectedSourceRows = () => connectedSourceEntries.map(({ source, contractRole }) => ({
@@ -465,23 +442,23 @@ const buildBomMatvarValidation = async (reviewId) => {
   }))
 
   checks.push(createValidationCheck({
-    id: 'bom-matvar-connections',
-    label: 'BOM Matvar connections',
-    status: connectedSources.length ? 'Valid' : 'Error',
+    id: 'bom-matvar-source-context',
+    label: 'BOM Matvar source context',
+    status: connectedSources.length ? 'Valid' : 'Warning',
     message: connectedSources.length
-      ? `${connectedSources.length} source(s) connected to BOM Matvar.`
-      : 'No sources are connected to BOM Matvar.',
+      ? `${connectedSources.length} source(s) available for BOM Matvar contract detection.`
+      : 'No sources are available for BOM Matvar contract detection.',
   }))
 
-  const bomL0Entry = connectedSourceEntries.find((entry) => entry.contractRole === 'BOM L0')
-  const matvarBomEntry = connectedSourceEntries.find((entry) => entry.contractRole === 'Mass Production')
+  const bomL0Entry = findBestSourceEntry(connectedSourceEntries, 'BOM L0', ['bom l0', 'bom_l0', 'bom-l0', 'boml0'])
+  const matvarBomEntry = findBestSourceEntry(connectedSourceEntries, 'Mass Production', ['mass production', 'matvar'])
 
   if (!bomL0Entry) {
     checks.push(createValidationCheck({
       id: 'bom-l0-source',
       label: 'BOM L0 source',
       status: 'Error',
-      message: 'BOM L0 source is not connected to BOM Matvar.',
+      message: 'BOM L0 source was not found in the available source registry.',
     }))
 
     return {
@@ -510,7 +487,7 @@ const buildBomMatvarValidation = async (reviewId) => {
     source: bomL0SourceName,
     status: bomL0Source.status === 'Ready' ? 'Valid' : 'Error',
     message: bomL0Source.status === 'Ready'
-      ? 'BOM L0 source is connected and ready.'
+      ? 'BOM L0 source is available and ready.'
       : `BOM L0 source status is ${bomL0Source.status}.`,
     detail: bomL0SourcePath,
   }))
@@ -608,7 +585,7 @@ const buildBomMatvarValidation = async (reviewId) => {
       id: 'matvar-bom-source',
       label: 'MATVAR BOM source',
       status: 'Error',
-      message: 'Mass Production source is not connected to BOM Matvar.',
+      message: 'Mass Production source was not found in the available source registry.',
       detail: 'Required source contract: sheet "Semi Panels List" with Item, ORACLE Item Description, INTEL Description, Tool/Phantom L1 and Scope.',
     }))
   } else {
@@ -622,7 +599,7 @@ const buildBomMatvarValidation = async (reviewId) => {
       source: sourceName,
       status: matvarSource.status === 'Ready' ? 'Valid' : 'Error',
       message: matvarSource.status === 'Ready'
-        ? 'MATVAR BOM source is connected and ready.'
+        ? 'MATVAR BOM source is available and ready.'
         : `MATVAR BOM source status is ${matvarSource.status}.`,
       detail: sourcePath,
     }))
@@ -715,7 +692,7 @@ const buildBomMatvarValidation = async (reviewId) => {
         label: 'Additional BOM Matvar source',
         source: sourceName,
         status: 'Warning',
-        message: 'Source is connected to BOM Matvar but is not used by the current MATVAR validation contract.',
+        message: 'Source is available but is not used by the current MATVAR validation contract.',
         detail: contractRole,
       }))
     })
@@ -757,8 +734,11 @@ const createComparisonRule = ({
   result,
   partNumber = '',
   description = '',
+  updatedAtRaw = '',
+  updatedAt = '',
   status,
   message,
+  ruleBasis,
 }) => ({
   id,
   rule,
@@ -766,8 +746,11 @@ const createComparisonRule = ({
   result,
   partNumber,
   description,
+  updatedAtRaw,
+  updatedAt,
   status,
   message,
+  ruleBasis,
 })
 
 const getMatvarRuleBasis = (row, reviewIntelDescription) => {
@@ -776,22 +759,42 @@ const getMatvarRuleBasis = (row, reviewIntelDescription) => {
   const actual = row.phantomL1 || 'missing'
 
   if (scope === 'Full Scope') {
-    return `Must contain a Full Scope row for INTEL Description "${reviewIntelDescription}". Phantom L1 is not compared for Full Scope.`
+    return [
+      `MATCH: Scope = "Full Scope" AND INTEL Description = "${reviewIntelDescription}".`,
+      'INFO: Phantom L1 is not compared for Full Scope.',
+      'MISSING: if no Full Scope MATVAR row exists for this INTEL Description.',
+    ]
   }
 
   if (scope === 'Control Scope') {
-    return `Scope = Control Scope must have Phantom L1 equal to BOM L0 Controller Scope EU-10 Part Number (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+    return [
+      `MATCH: Scope = "Control Scope" AND Phantom L1 = BOM L0 Controller Scope EU-10 Part Number (${expected || 'missing expected'}).`,
+      `MISMATCH: if actual Phantom L1 (${actual}) differs from expected value.`,
+      'MISSING: if no Control Scope MATVAR row exists for this INTEL Description.',
+    ]
   }
 
   if (scope === 'Heat Scope') {
-    return `Scope = Heat Scope must have Phantom L1 equal to BOM L0 Heat Scope US-20 Part Number (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+    return [
+      `MATCH: Scope = "Heat Scope" AND Phantom L1 = BOM L0 Heat Scope US-20 Part Number (${expected || 'missing expected'}).`,
+      `MISMATCH: if actual Phantom L1 (${actual}) differs from expected value.`,
+      'MISSING: if no Heat Scope MATVAR row exists for this INTEL Description.',
+    ]
   }
 
   if (scope === 'N2 Heat') {
-    return `Scope = N2 Heat must have Phantom L1 equal to BOM L0 N2 Heat 30 Part Number (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+    return [
+      `MATCH: Scope = "N2 Heat" AND Phantom L1 = BOM L0 N2 Heat 30 Part Number (${expected || 'missing expected'}).`,
+      `MISMATCH: if actual Phantom L1 (${actual}) differs from expected value.`,
+      'MISSING: if no N2 Heat MATVAR row exists for this INTEL Description.',
+    ]
   }
 
-  return `Scope = ${scope || 'missing'} must match the expected Phantom L1 from the corresponding BOM L0 scope row (${expected || 'missing expected'}). Actual Phantom L1: ${actual}.`
+  return [
+    `MATCH: Scope = "${scope || 'missing'}" AND Phantom L1 = expected BOM L0 scope Part Number (${expected || 'missing expected'}).`,
+    `MISMATCH: if actual Phantom L1 (${actual}) differs from expected value.`,
+    'MISSING: if the required MATVAR row does not exist for this INTEL Description.',
+  ]
 }
 
 const createMatvarComparisonRule = (row, index, reviewIntelDescription) => {
@@ -857,7 +860,14 @@ const buildBomMatvarComparison = async (reviewId) => {
       result: controllerEu10 ? 'Found' : controllers.length ? 'Missing expected variant' : 'Not found',
       partNumber: controllerEu10?.partNumber ?? '',
       description: controllerEu10?.description ?? '',
+      updatedAtRaw: controllerEu10?.updatedAtRaw ?? '',
+      updatedAt: controllerEu10?.updatedAt ?? '',
       status: controllerEu10 ? 'OK' : 'Missing',
+      ruleBasis: [
+        'MATCH: Description contains "Controller Scope" AND "EU" AND "10" -> use Part Number as MATVAR Control Scope Phantom L1.',
+        'MISSING: if no Controller Scope EU-10 row is found.',
+        'FALLBACK: none.',
+      ],
       message: controllerEu10
         ? 'Expected Controller Scope EU-10 was found.'
         : controllers.length
@@ -871,7 +881,14 @@ const buildBomMatvarComparison = async (reviewId) => {
       result: heatUs20 ? 'Found' : heatFallback ? 'Fallback' : 'Not found',
       partNumber: (heatUs20 ?? heatFallback)?.partNumber ?? '',
       description: (heatUs20 ?? heatFallback)?.description ?? '',
+      updatedAtRaw: (heatUs20 ?? heatFallback)?.updatedAtRaw ?? '',
+      updatedAt: (heatUs20 ?? heatFallback)?.updatedAt ?? '',
       status: heatUs20 ? 'OK' : heatFallback ? 'Fallback' : 'Missing',
+      ruleBasis: [
+        'MATCH: Description contains "Heat Scope" AND "US" AND "20" -> use Part Number as MATVAR Heat Scope Phantom L1.',
+        'FALLBACK: if no MATCH AND exactly 1 Heat Scope row exists -> use that Part Number.',
+        'MISSING: if 0 Heat Scope rows OR multiple non-US-20 Heat Scope rows.',
+      ],
       message: heatUs20
         ? 'Expected Heat Scope US-20 was found.'
         : heatFallback
@@ -885,7 +902,14 @@ const buildBomMatvarComparison = async (reviewId) => {
       result: fullScope ? 'Found' : 'Not found',
       partNumber: fullScope?.partNumber ?? '',
       description: fullScope?.description ?? '',
+      updatedAtRaw: fullScope?.updatedAtRaw ?? '',
+      updatedAt: fullScope?.updatedAt ?? '',
       status: fullScope ? 'Context' : 'Info',
+      ruleBasis: [
+        'MATCH: Description contains "Full Scope" -> use row as BOM Matvar context.',
+        'INFO: if no Full Scope row is found.',
+        'FALLBACK: none.',
+      ],
       message: fullScope
         ? 'Full Scope row is available as BOM Matvar context.'
         : 'Full Scope row is not available in the current BOM L0 match set.',
@@ -897,11 +921,32 @@ const buildBomMatvarComparison = async (reviewId) => {
       result: n2Heat30 ? 'Found' : 'Not found',
       partNumber: n2Heat30?.partNumber ?? '',
       description: n2Heat30?.description ?? '',
+      updatedAtRaw: n2Heat30?.updatedAtRaw ?? '',
+      updatedAt: n2Heat30?.updatedAt ?? '',
       status: n2Heat30 ? 'OK' : 'Info',
+      ruleBasis: [
+        'MATCH: Description contains ("N2 Heat" OR "N2Heat") AND "30" -> use Part Number as MATVAR N2 Heat Phantom L1.',
+        'INFO: if no N2 Heat 30 row is found.',
+        'FALLBACK: none.',
+      ],
       message: n2Heat30
         ? 'N2 Heat 30 row was found.'
         : 'N2 Heat 30 is not present in this BOM L0 match set.',
     }),
+  ]
+
+  const matvarComparisonRules = matvarRows.map((row, index) => createMatvarComparisonRule(row, index, validation.review.intelDescription))
+  const okRules = [
+    ...rules.filter((rule) => rule.status === 'OK' || rule.status === 'Context'),
+    ...matvarComparisonRules.filter((rule) => rule.status === 'OK' || rule.status === 'Context'),
+  ]
+  const fallbackRules = [
+    ...rules.filter((rule) => rule.status === 'Fallback' || rule.status === 'Info'),
+    ...matvarComparisonRules.filter((rule) => rule.status === 'Mismatch'),
+  ]
+  const missingRules = [
+    ...rules.filter((rule) => rule.status === 'Missing'),
+    ...matvarComparisonRules.filter((rule) => rule.status === 'Missing'),
   ]
 
   return {
@@ -913,15 +958,16 @@ const buildBomMatvarComparison = async (reviewId) => {
         ? 'Warning'
         : 'Valid',
     summary: {
-      rules: rules.length,
-      ok: rules.filter((rule) => rule.status === 'OK').length,
-      fallback: rules.filter((rule) => rule.status === 'Fallback').length,
-      missing: rules.filter((rule) => rule.status === 'Missing').length,
-      context: rules.filter((rule) => rule.status === 'Context' || rule.status === 'Info').length,
+      rules: rules.length + matvarComparisonRules.length,
+      ok: okRules.length,
+      fallback: fallbackRules.length,
+      missing: missingRules.length,
+      context: rules.filter((rule) => rule.status === 'Context' || rule.status === 'Info').length +
+        matvarComparisonRules.filter((rule) => rule.status === 'Context').length,
       sourceRows: rows.length,
     },
     rules,
-    matvarRules: matvarRows.map((row, index) => createMatvarComparisonRule(row, index, validation.review.intelDescription)),
+    matvarRules: matvarComparisonRules,
   }
 }
 
