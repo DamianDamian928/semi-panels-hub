@@ -157,6 +157,20 @@ export type BomMatvarValidationPayload = {
     updatedAt: string
     partNumberValid: boolean
   }>
+  matvarSourceRows: Array<{
+    sourceName: string
+    sourcePath: string
+    sourceSheet: string
+    item: string
+    oracleItemDescription: string
+    intelDescription: string
+    phantomL1: string
+    scope: string
+    verificationText: string
+    verificationStatus?: 'OK' | 'NOK' | 'None'
+    expectedPhantomL1?: string
+    isSynthetic?: boolean
+  }>
   matvarRows: Array<{
     sourceName: string
     sourcePath: string
@@ -202,6 +216,20 @@ export type BomMatvarComparisonPayload = {
     message: string
     ruleBasis: string[]
   }>
+  matvarSourceRows: Array<{
+    id: string
+    sourceName: string
+    sourcePath: string
+    sourceSheet: string
+    item: string
+    oracleItemDescription: string
+    intelDescription: string
+    phantomL1: string
+    scope: string
+    verificationText: string
+    status: 'OK' | 'Missing' | 'Mismatch' | 'Context'
+    ruleBasis: string[]
+  }>
   matvarRules: Array<{
     id: string
     rule: string
@@ -219,6 +247,42 @@ export type BomMatvarComparisonPayload = {
     status: 'OK' | 'Missing' | 'Mismatch' | 'Context'
     message: string[]
   }>
+  oracleComparison: {
+    sourceName: string
+    sourcePath: string
+    baseRows: Array<{
+      id: string
+      item: string
+      oracleItemDescription: string
+      intelDescription: string
+      phantomL1: string
+      scope: string
+      oracleBomText: string
+      oracleBomStatus: 'OK' | 'Mismatch'
+      oracleNameText: string
+      oracleNameStatus: 'OK' | 'Mismatch'
+      fileName: string
+      ruleBasis: string[]
+    }>
+    structureTables: Array<{
+      item: string
+      fileName: string
+      filePath: string
+      sourceSheet: string
+      columns: string[]
+      descriptionText: string
+      level1Items: string[]
+      rows: Array<{
+        id: string
+        level: string
+        itemName: string
+        itemDescription: string
+        values: string[]
+        ruleBasis: string[]
+      }>
+      ruleBasis: string[]
+    }>
+  }
 }
 
 export type BomMatvarReviewIssuesPayload = {

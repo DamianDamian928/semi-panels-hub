@@ -1,7 +1,7 @@
 import { constants, readFileSync } from 'node:fs'
-import { access, stat } from 'node:fs/promises'
+import { access, readdir, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readExcelPreview, readExcelWorksheet } from './excelPreview.mjs'
 import {
@@ -138,6 +138,40 @@ const defaultExpectedFormatByType = {
 const checkedAtLabel = (checkedAt) => checkedAt
 
 const getSourcePath = (source) => source.sourceFile?.path
+
+const getFolderFileType = (fileName) => extname(fileName).replace('.', '').toUpperCase() || 'NO EXT'
+
+const scanLocalFolder = async (folderPath) => {
+  const entries = await readdir(folderPath, { withFileTypes: true })
+  const summary = {
+    fileCount: 0,
+    folderCount: 0,
+    totalSizeBytes: 0,
+    typeCounts: {},
+  }
+
+  await Promise.all(entries.map(async (entry) => {
+    if (entry.isDirectory()) {
+      summary.folderCount += 1
+      return
+    }
+
+    if (!entry.isFile()) return
+
+    summary.fileCount += 1
+    const fileType = getFolderFileType(entry.name)
+    summary.typeCounts[fileType] = (summary.typeCounts[fileType] ?? 0) + 1
+
+    try {
+      const fileStats = await stat(join(folderPath, entry.name))
+      summary.totalSizeBytes += fileStats.size
+    } catch {
+      // Keep the count even if a single file size cannot be read.
+    }
+  }))
+
+  return summary
+}
 
 const previewableFileExtensions = new Set(['xlsx', 'xlsm'])
 
@@ -395,6 +429,234 @@ const buildMatvarRowsView = ({ matvarRows, matvarTargets }) => {
   })
 }
 
+const createMatvarSourceTableRow = (row, index, reviewIntelDescription, matvarRows) => {
+  const scope = String(row.scope ?? '').trim()
+  const matchedRuleRow = matvarRows.find((matvarRow) =>
+    String(matvarRow.scope ?? '').trim().toLowerCase() === scope.toLowerCase())
+  const verificationText = matchedRuleRow?.verificationText ?? ''
+  const expectedPhantomL1 = matchedRuleRow?.expectedPhantomL1 ?? ''
+
+  return {
+    id: `matvar-source-${index + 1}`,
+    sourceName: row.sourceName,
+    sourcePath: row.sourcePath,
+    sourceSheet: row.sourceSheet,
+    item: row.item,
+    oracleItemDescription: row.oracleItemDescription,
+    intelDescription: row.intelDescription,
+    phantomL1: row.phantomL1,
+    scope,
+    verificationText,
+    status: verificationText.startsWith('OK')
+      ? 'OK'
+      : verificationText.startsWith('NOK')
+        ? 'Mismatch'
+        : 'Context',
+    ruleBasis: [
+      `MATCH: INTEL Description contains "${reviewIntelDescription}".`,
+      'SOURCE: read from MATVAR source sheet "Semi Panels List".',
+      scope === 'Full Scope'
+        ? 'VERIFY: Full Scope is used as MATVAR context; Phantom L1 is not compared.'
+        : `VERIFY: Phantom L1 is compared with expected BOM L0 Part Number (${expectedPhantomL1 || 'missing expected'}).`,
+    ],
+  }
+}
+
+const normalizeOracleList = (values) =>
+  values
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
+
+const oracleListsEqual = (left, right) => {
+  const normalizedLeft = normalizeOracleList(left)
+  const normalizedRight = normalizeOracleList(right)
+  return normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+}
+
+const expectedOracleName = (intelDescription, scope) => {
+  const intel = String(intelDescription ?? '').trim()
+  if (!intel) return ''
+  if (scope === 'Full Scope') return `Intel ${intel} System`
+  if (scope === 'Control Scope') return `Intel ${intel} Controller`
+  if (scope === 'Heat Scope') return `Intel ${intel} Heat`
+  if (scope === 'N2 Heat') return `Intel ${intel} N2 Heat`
+  return ''
+}
+
+const findOracleFolderSource = () =>
+  workflowRepository.getSources().find((source) => {
+    const text = [
+      source.name,
+      source.sourceFile?.name,
+      source.sourceFile?.path,
+      source.location,
+    ].join(' ').toLowerCase()
+
+    return source.type === 'Folder' &&
+      source.status === 'Ready' &&
+      source.sourceFile?.path &&
+      text.includes('matvar')
+  })
+
+const findOracleReportFile = async (folderPath, item) => {
+  const normalizedItem = String(item ?? '').trim().toLowerCase()
+  if (!normalizedItem) return null
+
+  const entries = await readdir(folderPath, { withFileTypes: true })
+  const candidates = await Promise.all(entries
+    .filter((entry) => entry.isFile())
+    .filter((entry) => ['.xls', '.xlsx', '.xlsm'].includes(extname(entry.name).toLowerCase()))
+    .filter((entry) => entry.name.toLowerCase().includes(normalizedItem))
+    .map(async (entry) => {
+      const path = join(folderPath, entry.name)
+      const fileStats = await stat(path)
+      return {
+        path,
+        name: entry.name,
+        modifiedAt: fileStats.mtimeMs,
+      }
+    }))
+
+  return candidates.sort((left, right) => right.modifiedAt - left.modifiedAt)[0] ?? null
+}
+
+const readOracleStructureReport = async (filePath) => {
+  const worksheet = await readExcelWorksheet(filePath)
+  const levelColumnIndex = worksheet.columns.findIndex((column) => normalizeColumnField(column) === 'level')
+  const itemNameColumnIndex = worksheet.columns.findIndex((column) => normalizeColumnField(column) === 'itemname')
+  const descriptionColumnIndex = worksheet.columns.findIndex((column) => normalizeColumnField(column) === 'itemdescription')
+  const desiredColumns = [
+    'Level',
+    'Item Class',
+    'Item Name',
+    'Item Description',
+    'Revision',
+    'User Item Type',
+    'Lifecycle',
+    'Sequence',
+    'Quantity',
+    'UOM',
+    'Effectivity Date',
+  ]
+  const columns = desiredColumns.filter((column) => worksheet.columns.some((sourceColumn) => normalizeColumnField(sourceColumn) === normalizeColumnField(column)))
+  const columnIndexes = columns.map((column) => worksheet.columns.findIndex((sourceColumn) =>
+    normalizeColumnField(sourceColumn) === normalizeColumnField(column)))
+  const rows = worksheet.rows
+    .filter((row) => {
+      const level = String(row[levelColumnIndex] ?? '').trim()
+      return level === '0' || level === '1'
+    })
+    .map((row, index) => ({
+      id: `${basename(filePath)}-${index}`,
+      level: String(row[levelColumnIndex] ?? '').trim(),
+      itemName: String(row[itemNameColumnIndex] ?? '').trim(),
+      itemDescription: String(row[descriptionColumnIndex] ?? '').replace(/^"|"$/g, '').trim(),
+      values: columnIndexes.map((columnIndex) => String(row[columnIndex] ?? '').replace(/^"|"$/g, '').trim()),
+      ruleBasis: [
+        'SOURCE: read from Oracle/Matvar Structure Report file.',
+        'MATCH: include rows where Level is 0 or 1.',
+        'FALLBACK: none; rows outside Level 0/1 are not used in this comparison table.',
+      ],
+    }))
+  const level0 = rows.find((row) => row.level === '0')
+
+  return {
+    fileName: basename(filePath),
+    filePath,
+    sourceSheet: worksheet.activeSheetName,
+    columns,
+    descriptionText: level0?.itemDescription ?? '',
+    level1Items: rows.filter((row) => row.level === '1').map((row) => row.itemName).filter(Boolean),
+    rows,
+  }
+}
+
+const buildOracleComparisonTables = async ({ matvarRows, reviewIntelDescription }) => {
+  const oracleSource = findOracleFolderSource()
+  if (!oracleSource?.sourceFile?.path) {
+    return {
+      sourceName: '',
+      sourcePath: '',
+      baseRows: [],
+      structureTables: [],
+    }
+  }
+
+  const expectedForFullScope = [...new Set(matvarRows
+    .filter((row) => String(row.scope ?? '').trim() !== 'Full Scope')
+    .map((row) => String(row.phantomL1 ?? '').trim())
+    .filter(Boolean))]
+  const structureByItem = new Map()
+
+  await Promise.all(matvarRows.map(async (row) => {
+    const reportFile = await findOracleReportFile(oracleSource.sourceFile.path, row.item)
+    if (!reportFile) return
+    structureByItem.set(row.item, await readOracleStructureReport(reportFile.path))
+  }))
+
+  const baseRows = matvarRows.map((row, index) => {
+    const scope = String(row.scope ?? '').trim()
+    const structure = structureByItem.get(row.item)
+    const expectedName = expectedOracleName(row.intelDescription || reviewIntelDescription, scope)
+    const actualName = structure?.descriptionText ?? ''
+    const nameOk = Boolean(structure && expectedName && actualName === expectedName)
+    const expectedBom = scope === 'Full Scope'
+      ? expectedForFullScope
+      : row.phantomL1 ? [row.phantomL1] : []
+    const actualBom = structure?.level1Items ?? []
+    const bomOk = Boolean(structure && expectedBom.length && oracleListsEqual(expectedBom, actualBom))
+
+    return {
+      id: `oracle-base-${index + 1}`,
+      item: row.item,
+      oracleItemDescription: row.oracleItemDescription,
+      intelDescription: row.intelDescription,
+      phantomL1: row.phantomL1,
+      scope,
+      oracleBomText: !structure
+        ? 'NOK, brak pliku Oracle'
+        : expectedBom.length === 0
+          ? 'NOK, brak danych L1'
+          : bomOk ? 'OK, BOM zgodny' : 'NOK, BOM niezgodny',
+      oracleBomStatus: !structure || expectedBom.length === 0
+        ? 'Mismatch'
+        : bomOk ? 'OK' : 'Mismatch',
+      oracleNameText: !structure
+        ? 'NOK, brak pliku Oracle'
+        : !expectedName
+          ? 'NOK, brak reguły nazwy'
+          : nameOk ? 'OK, nazwa zgodna' : 'NOK, nazwa niezgodna',
+      oracleNameStatus: !structure || !expectedName
+        ? 'Mismatch'
+        : nameOk ? 'OK' : 'Mismatch',
+      fileName: structure?.fileName ?? '',
+      ruleBasis: [
+        `MATCH: Item = "${row.item}" -> find matching Structure Report in Matvar Oracle folder.`,
+        `BOM Oracle: expected Level 1 item(s): ${expectedBom.length ? expectedBom.join(', ') : 'missing expected L1'}.`,
+        `Nazwa Oracle: expected Level 0 description "${expectedName || 'missing expected name'}".`,
+        'FALLBACK: none; missing Oracle file, missing Level 1 data, or mismatched Level 0 name stays NOK.',
+      ],
+    }
+  })
+
+  return {
+    sourceName: oracleSource.sourceFile.name ?? oracleSource.name,
+    sourcePath: oracleSource.sourceFile.path,
+    baseRows,
+    structureTables: [...structureByItem.entries()].map(([item, structure]) => ({
+      item,
+      ...structure,
+      ruleBasis: [
+        `MATCH: file name contains "${item}".`,
+        'DISPLAY: rows where Level is 0 or 1.',
+        'FALLBACK: none; if the matching Structure Report is missing, the base Oracle table shows NOK.',
+      ],
+    })),
+  }
+}
+
 const buildBomMatvarValidation = async (reviewId) => {
   const review = workflowRepository.getReview(reviewId)
 
@@ -579,6 +841,7 @@ const buildBomMatvarValidation = async (reviewId) => {
   }))
 
   let matvarRows = []
+  let matvarSourceRows = []
 
   if (!matvarBomEntry) {
     checks.push(createValidationCheck({
@@ -649,6 +912,7 @@ const buildBomMatvarValidation = async (reviewId) => {
             .map(normalizeMatvarContractRow)
             .filter((row) => String(row.intelDescription ?? '').includes(intelDescription))
 
+          matvarSourceRows = filteredMatvarRows
           const matvarTargets = computeMatvarTargets(computeBomL0Area2Rows(bomL0Rows))
           matvarRows = buildMatvarRowsView({
             matvarRows: filteredMatvarRows,
@@ -719,6 +983,7 @@ const buildBomMatvarValidation = async (reviewId) => {
     checks,
     connectedSources: buildConnectedSourceRows(),
     bomL0Rows,
+    matvarSourceRows,
     matvarRows,
   }
 }
@@ -836,6 +1101,7 @@ const buildBomMatvarComparison = async (reviewId) => {
 
   const rows = validation.bomL0Rows ?? []
   const matvarRows = validation.matvarRows ?? []
+  const matvarSourceRows = validation.matvarSourceRows ?? []
   const controllerEu10 = findBomL0Row(rows, (description) =>
     description.includes('controller scope') &&
     description.includes('eu') &&
@@ -936,13 +1202,23 @@ const buildBomMatvarComparison = async (reviewId) => {
   ]
 
   const matvarComparisonRules = matvarRows.map((row, index) => createMatvarComparisonRule(row, index, validation.review.intelDescription))
+  const matvarSourceTableRows = matvarSourceRows.map((row, index) =>
+    createMatvarSourceTableRow(row, index, validation.review.intelDescription, matvarRows))
+  const oracleComparison = await buildOracleComparisonTables({
+    matvarRows: matvarSourceRows,
+    reviewIntelDescription: validation.review.intelDescription,
+  })
   const okRules = [
     ...rules.filter((rule) => rule.status === 'OK' || rule.status === 'Context'),
     ...matvarComparisonRules.filter((rule) => rule.status === 'OK' || rule.status === 'Context'),
+    ...matvarSourceTableRows.filter((rule) => rule.status === 'OK' || rule.status === 'Context'),
+    ...oracleComparison.baseRows.filter((row) => row.oracleBomStatus === 'OK' && row.oracleNameStatus === 'OK'),
   ]
   const fallbackRules = [
     ...rules.filter((rule) => rule.status === 'Fallback' || rule.status === 'Info'),
     ...matvarComparisonRules.filter((rule) => rule.status === 'Mismatch'),
+    ...matvarSourceTableRows.filter((rule) => rule.status === 'Mismatch'),
+    ...oracleComparison.baseRows.filter((row) => row.oracleBomStatus !== 'OK' || row.oracleNameStatus !== 'OK'),
   ]
   const missingRules = [
     ...rules.filter((rule) => rule.status === 'Missing'),
@@ -958,16 +1234,19 @@ const buildBomMatvarComparison = async (reviewId) => {
         ? 'Warning'
         : 'Valid',
     summary: {
-      rules: rules.length + matvarComparisonRules.length,
+      rules: rules.length + matvarComparisonRules.length + matvarSourceTableRows.length,
       ok: okRules.length,
       fallback: fallbackRules.length,
       missing: missingRules.length,
       context: rules.filter((rule) => rule.status === 'Context' || rule.status === 'Info').length +
-        matvarComparisonRules.filter((rule) => rule.status === 'Context').length,
+        matvarComparisonRules.filter((rule) => rule.status === 'Context').length +
+        matvarSourceTableRows.filter((rule) => rule.status === 'Context').length,
       sourceRows: rows.length,
     },
     rules,
+    matvarSourceRows: matvarSourceTableRows,
     matvarRules: matvarComparisonRules,
+    oracleComparison,
   }
 }
 
@@ -1055,31 +1334,52 @@ const checkSourceAccess = async (source) => {
     const fileStats = await stat(path)
     await access(path, constants.R_OK)
 
-    const status = fileStats.size > 0 ? 'Ready' : 'Error'
-    const message = fileStats.size > 0
-      ? 'Local file exists and is readable.'
-      : 'Local file exists but is empty.'
+    const isFolderSource = source.type === 'Folder'
+    const isDirectory = fileStats.isDirectory()
+    const status = isFolderSource
+      ? isDirectory ? 'Ready' : 'Error'
+      : !isDirectory && fileStats.size > 0 ? 'Ready' : 'Error'
+    const message = isFolderSource
+      ? isDirectory
+        ? 'Local folder exists and is readable.'
+        : 'Saved local path is not a folder.'
+      : isDirectory
+        ? 'Saved local path is a folder, but this source expects a file.'
+        : fileStats.size > 0
+          ? 'Local file exists and is readable.'
+          : 'Local file exists but is empty.'
+    const folderSummary = isFolderSource && status === 'Ready'
+      ? await scanLocalFolder(path)
+      : undefined
 
     return {
       ...source,
       status,
       lastChecked: checkedAtLabel(checkedAt),
+      sourceFile: source.sourceFile
+        ? {
+          ...source.sourceFile,
+          folderSummary,
+        }
+        : source.sourceFile,
       accessCheck: {
         checkedAt,
         status,
         message,
         exists: true,
-        readable: true,
-        sizeBytes: fileStats.size,
+        readable: status === 'Ready',
+        sizeBytes: isFolderSource ? undefined : fileStats.size,
         modifiedAt: fileStats.mtime.toISOString(),
       },
     }
   } catch (error) {
+    const isFolder = source.type === 'Folder'
+    const localPathLabel = isFolder ? 'folder' : 'file'
     const message = error?.code === 'ENOENT'
-      ? 'Local file was not found at the saved path.'
+      ? `Local ${localPathLabel} was not found at the saved path.`
       : error?.code === 'EACCES' || error?.code === 'EPERM'
-        ? 'Local file exists but cannot be read.'
-        : 'Local file access check failed.'
+        ? `Local ${localPathLabel} exists but cannot be read.`
+        : `Local ${localPathLabel} access check failed.`
 
     return {
       ...source,
@@ -1353,6 +1653,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
     }
 
     const registeredAt = new Date().toISOString()
+    const isFolderSource = source.type === 'Folder'
     const nextSource = {
       ...source,
       location: body.file.path,
@@ -1365,10 +1666,10 @@ export const createRequestHandler = ({ host, port }) => async (request, response
       accessCheck: {
         checkedAt: registeredAt,
         status: 'Needs check',
-        message: 'Local file location saved. Access will be checked automatically on Sources.',
+        message: `Local ${isFolderSource ? 'folder' : 'file'} location saved. Access will be checked automatically on Sources.`,
         exists: true,
         readable: false,
-        sizeBytes: body.file.sizeBytes,
+        sizeBytes: isFolderSource ? undefined : body.file.sizeBytes,
         modifiedAt: body.file.modifiedAt,
       },
     }
@@ -1376,7 +1677,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
     workflowRepository.updateSource(nextSource)
     workflowRepository.updateValidationState(source.name, {
       state: 'Not checked',
-      message: `Local file registered: ${body.file.name}. Waiting for access check.`,
+      message: `Local ${isFolderSource ? 'folder' : 'file'} registered: ${body.file.name}. Waiting for access check.`,
     })
 
     sendJson(response, 200, workflowRepository.getBootstrapPayload())

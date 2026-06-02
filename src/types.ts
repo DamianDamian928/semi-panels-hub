@@ -86,6 +86,14 @@ export type SourceFileMetadata = {
   sizeBytes: number
   modifiedAt: string
   registeredAt?: string
+  folderSummary?: SourceFolderSummary
+}
+
+export type SourceFolderSummary = {
+  fileCount: number
+  folderCount: number
+  totalSizeBytes: number
+  typeCounts: Record<string, number>
 }
 
 export type SourceAccessCheck = {

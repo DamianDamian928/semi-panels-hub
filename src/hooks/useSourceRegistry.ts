@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ProcessStep, SourceCreateInput, SourceDefinition, SourceFileMetadata } from '../types'
-import { localFileHelperEndpoint } from '../localFileHelper'
+import { localFileHelperEndpoint, localFolderHelperEndpoint } from '../localFileHelper'
 import type { LocalFileSelection } from '../localFileHelper'
 
 type UseSourceRegistryOptions = {
@@ -59,7 +59,9 @@ export const useSourceRegistry = ({
     setSourceSelectionError(null)
 
     try {
-      const response = await fetch(localFileHelperEndpoint)
+      const source = sourceDefinitions.find((item) => item.id === sourceId)
+      const helperEndpoint = source?.type === 'Folder' ? localFolderHelperEndpoint : localFileHelperEndpoint
+      const response = await fetch(helperEndpoint)
       if (!response.ok) throw new Error('Local file helper did not respond correctly.')
 
       const result = (await response.json()) as {
@@ -69,7 +71,7 @@ export const useSourceRegistry = ({
       }
 
       if (result.cancelled) return
-      if (!result.file) throw new Error(result.error ?? 'No file was returned by the local helper.')
+      if (!result.file) throw new Error(result.error ?? 'No local path was returned by the local helper.')
 
       await registerSourceLocalFile(sourceId, result.file)
       await checkSourceAccess(sourceId)

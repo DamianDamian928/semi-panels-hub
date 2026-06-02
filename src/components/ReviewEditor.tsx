@@ -802,6 +802,10 @@ export function ReviewEditor({
     const matvarRulesSourceLabel = matvarRules[0]
       ? [matvarRules[0].sourceName, matvarRules[0].sourceSheet].filter(Boolean).join(' / ')
       : ''
+    const oracleComparison = comparison?.oracleComparison
+    const oracleBaseRows = oracleComparison?.baseRows ?? []
+    const oracleStructureTables = oracleComparison?.structureTables ?? []
+    const oracleSourceLabel = oracleComparison?.sourceName || 'Matvar - Oracle'
     const summary = comparison?.summary ?? {
       rules: 0,
       ok: 0,
@@ -891,6 +895,10 @@ export function ReviewEditor({
               <strong>{summary.rules}</strong>
             </article>
             <article className="source-summary-card">
+              <span>Oracle files</span>
+              <strong>{oracleStructureTables.length}</strong>
+            </article>
+            <article className="source-summary-card">
               <span>OK</span>
               <strong>{summary.ok}</strong>
             </article>
@@ -973,6 +981,7 @@ export function ReviewEditor({
                     <th>Expected</th>
                     <th>Result</th>
                     <th>Item</th>
+                    <th>ORACLE Item Description</th>
                     <th>INTEL Description</th>
                     <th>Phantom L1</th>
                     <th>Scope</th>
@@ -990,6 +999,7 @@ export function ReviewEditor({
                       <td>{rule.expected}</td>
                       <td>{rule.result}</td>
                       <td>{rule.item || '-'}</td>
+                      <td>{rule.oracleItemDescription || '-'}</td>
                       <td>{rule.intelDescription || '-'}</td>
                       <td>{rule.phantomL1 || '-'}</td>
                       <td>{rule.scope || '-'}</td>
@@ -1010,6 +1020,112 @@ export function ReviewEditor({
             <div className="source-registry-empty">
               <strong>No MATVAR comparison data</strong>
               <p>Refresh comparison after MATVAR validation has current data.</p>
+            </div>
+          )}
+
+          <p className="source-detail-section-title">
+            Oracle - BOM (folder){oracleSourceLabel ? ` (${oracleSourceLabel})` : ''}
+          </p>
+          {oracleBaseRows.length ? (
+            <div className="table-wrap comparison-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>ORACLE Item Description</th>
+                    <th>INTEL Description</th>
+                    <th>Phantom L1</th>
+                    <th>Scope</th>
+                    <th>BOM Oracle</th>
+                    <th>Nazwa Oracle</th>
+                    <th>Rules</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {oracleBaseRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.item || '-'}</td>
+                      <td>{row.oracleItemDescription || '-'}</td>
+                      <td>{row.intelDescription || '-'}</td>
+                      <td>{row.phantomL1 || '-'}</td>
+                      <td>{row.scope || '-'}</td>
+                      <td>
+                        <span className={getRuleStatusClass(row.oracleBomStatus)}>{row.oracleBomText || '-'}</span>
+                      </td>
+                      <td>
+                        <span className={getRuleStatusClass(row.oracleNameStatus)}>{row.oracleNameText || '-'}</span>
+                      </td>
+                      <td>
+                        <div className="comparison-rule-basis">
+                          {(Array.isArray(row.ruleBasis) ? row.ruleBasis : [row.ruleBasis]).map((line) => (
+                            <span key={line}>{line}</span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="source-registry-empty">
+              <strong>No Oracle folder data</strong>
+              <p>Refresh comparison after the Matvar Oracle folder has been connected and validated.</p>
+            </div>
+          )}
+
+          <p className="source-detail-section-title">
+            Dopasowane pliki Oracle (Level 0 / Level 1)
+          </p>
+          {oracleStructureTables.length ? (
+            <div className="comparison-structure-list">
+              {oracleStructureTables.map((table) => (
+                <article className="comparison-structure-card" key={table.item}>
+                  <div className="comparison-structure-card-header">
+                    <div>
+                      <h4>{table.item}</h4>
+                      <p>{table.fileName}</p>
+                    </div>
+                    <span className={validationStateClassName.Valid}>read-only</span>
+                  </div>
+                  <p className="comparison-structure-description">
+                    Description (Level 0): <strong>{table.descriptionText || '-'}</strong>
+                  </p>
+                  <div className="table-wrap comparison-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          {table.columns.map((column) => (
+                            <th key={column}>{column}</th>
+                          ))}
+                          <th>Rules</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {table.rows.map((row) => (
+                          <tr key={row.id}>
+                            {row.values.map((value, index) => (
+                              <td key={`${row.id}-${table.columns[index]}`}>{value || '-'}</td>
+                            ))}
+                            <td>
+                              <div className="comparison-rule-basis">
+                                {row.ruleBasis.map((line) => (
+                                  <span key={line}>{line}</span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="source-registry-empty">
+              <strong>No matched Oracle files</strong>
+              <p>Refresh comparison after the Matvar Oracle folder source is ready.</p>
             </div>
           )}
         </>

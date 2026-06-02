@@ -3680,6 +3680,15 @@ tbody tr:last-child td {
   font-weight: 400;
 }
 
+.source-detail-panel .source-folder-summary {
+  display: grid;
+  gap: 1px;
+  color: #d8e1ec;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .source-detail-panel .source-detail-actions {
   gap: 12px;
   padding-top: 20px;
@@ -4193,6 +4202,47 @@ tbody tr:last-child td {
   font-weight: 400;
   line-height: 1.4;
   letter-spacing: 0;
+}
+
+.comparison-structure-list {
+  display: grid;
+  gap: 12px;
+}
+
+.comparison-structure-card {
+  overflow: hidden;
+  border: 1px solid rgba(126, 145, 168, 0.16);
+  border-radius: 8px;
+  background: rgba(9, 17, 27, 0.82);
+}
+
+.comparison-structure-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(126, 145, 168, 0.14);
+  background: rgba(15, 25, 39, 0.9);
+}
+
+.comparison-structure-card-header h4 {
+  margin: 0;
+  color: #eef5ff;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.comparison-structure-card-header p,
+.comparison-structure-description {
+  margin: 0;
+  color: #9ca8b8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.comparison-structure-description {
+  padding: 12px 16px 0;
 }
 
 .editor-workspace .review-issue-row,

@@ -121,6 +121,20 @@ export const sources = [
     description: 'Manual MATVAR export that will be connected to MATVAR analysis in the Connections step.',
     accessMode: 'Read-only',
   },
+  {
+    id: '8',
+    name: 'Matvar - Oracle',
+    type: 'Folder',
+    location: 'Local folder / Matvar - Oracle',
+    scope: 'Global',
+    status: 'Needs location',
+    usedFor: ['BOM'],
+    expectedFormat: 'Folder path',
+    lastChecked: 'Not checked',
+    owner: 'Damian',
+    description: 'Read-only source registered for this review workflow.',
+    accessMode: 'Read-only',
+  },
 ]
 
 export const validationStatesBySource = {
@@ -131,6 +145,7 @@ export const validationStatesBySource = {
   'Sharepoint documentation': { state: 'Not checked', message: 'Validation has not been run yet.' },
   'PLM SQL connection': { state: 'Not checked', message: 'SQL profile has not been configured yet.' },
   'MATVAR file': { state: 'Not checked', message: 'MATVAR export location has not been selected yet.' },
+  'Matvar - Oracle': { state: 'Not checked', message: 'Source registered. Waiting for location and access check.' },
 }
 
 export const reviewIssues = [

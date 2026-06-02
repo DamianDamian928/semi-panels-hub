@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { localFileOpenLocationEndpoint } from '../../localFileHelper'
-import type { SourceCreateInput, SourceDefinition, SourceType } from '../../types'
+import type { SourceCreateInput, SourceDefinition, SourceFolderSummary, SourceType } from '../../types'
 import { formatFileModifiedAt, formatFileSize, SourceTypeGlyph } from '../sharedReviewUi'
 
 type SourcesStepProps = {
@@ -19,7 +19,7 @@ type SourcesStepProps = {
   onTestSourceAccess: (sourceId: string) => void
 }
 
-const localFileSourceTypes = new Set<SourceDefinition['type']>(['File', 'Manual export'])
+const localPathSourceTypes = new Set<SourceDefinition['type']>(['File', 'Folder', 'Manual export'])
 const sourceTypeOptions: SourceType[] = ['File', 'Folder', 'SQL', 'SharePoint', 'Manual export']
 
 const defaultExpectedFormatByType: Record<SourceType, string> = {
@@ -58,9 +58,49 @@ const sourceTypeFallbackLabel: Record<SourceType, string> = {
 }
 
 const getSourceApplicationTypeLabel = (source: SourceDefinition) => {
+  if (source.type === 'Folder') return 'Folder'
   if (!source.sourceFile) return sourceTypeFallbackLabel[source.type]
 
   return fileTypeLabelByExtension[source.sourceFile.extension.toLowerCase()] ?? 'Local file'
+}
+
+const getLocalPathActionLabel = (source: SourceDefinition, isSelecting: boolean) => {
+  if (isSelecting) return 'Opening...'
+
+  if (source.type === 'Folder') {
+    return source.sourceFile ? 'Change local folder' : 'Choose local folder'
+  }
+
+  return source.sourceFile ? 'Change local file' : 'Choose local file'
+}
+
+const formatFolderTypes = (folderSummary: SourceFolderSummary) => {
+  const entries = Object.entries(folderSummary.typeCounts)
+    .sort(([leftType, leftCount], [rightType, rightCount]) =>
+      rightCount - leftCount || leftType.localeCompare(rightType),
+    )
+
+  return entries.length
+    ? entries.map(([type, count]) => `${type} ${count}`).join(', ')
+    : '-'
+}
+
+const formatFolderSummaryLines = (folderSummary: SourceFolderSummary) => [
+  `Files ${folderSummary.fileCount} · Folders ${folderSummary.folderCount}`,
+  `Total ${formatFileSize(folderSummary.totalSizeBytes)}`,
+  `Types ${formatFolderTypes(folderSummary)}`,
+]
+
+const getSourceSizeLabel = (source: SourceDefinition) => {
+  if (!source.sourceFile) return '-'
+
+  if (source.type === 'Folder') {
+    return source.sourceFile.folderSummary
+      ? formatFileSize(source.sourceFile.folderSummary.totalSizeBytes)
+      : '-'
+  }
+
+  return formatFileSize(source.sourceFile.sizeBytes)
 }
 
 export function SourcesStep({
@@ -87,7 +127,10 @@ export function SourcesStep({
   const typeCount = new Set(sourceDefinitions.map((source) => source.type)).size
   const statusToneClass = selectedSource?.status.toLowerCase().replace(/\s+/g, '-') ?? 'needs-location'
   const selectedSourceFile = selectedSource?.sourceFile
-  const canChooseLocalFile = selectedSource ? localFileSourceTypes.has(selectedSource.type) : false
+  const selectedFolderSummary = selectedSource?.type === 'Folder' ? selectedSourceFile?.folderSummary : undefined
+  const selectedFolderSummaryLines = selectedFolderSummary ? formatFolderSummaryLines(selectedFolderSummary) : []
+  const selectedFolderSummaryTitle = selectedFolderSummaryLines.join(' / ')
+  const canChooseLocalPath = selectedSource ? localPathSourceTypes.has(selectedSource.type) : false
   const isSelectingSource = selectedSource ? sourceSelectionPendingId === selectedSource.id : false
   const isCheckingSelectedSource = selectedSource ? sourceAccessPendingId === selectedSource.id : false
   const selectedAccessCheck = selectedSource?.accessCheck
@@ -198,7 +241,7 @@ export function SourcesStep({
             <span className="source-registry-icon-head" />
             <span>Source</span>
             <span>Type</span>
-            <span>File size</span>
+            <span>Size</span>
             <span>Status</span>
           </div>
           {sourceDefinitions.map((source) => {
@@ -231,7 +274,7 @@ export function SourcesStep({
                   {sourceApplicationTypeLabel}
                 </span>
                 <span className="source-file-size">
-                  {source.sourceFile ? formatFileSize(source.sourceFile.sizeBytes) : '-'}
+                  {getSourceSizeLabel(source)}
                 </span>
                 <span className={`source-status source-status-${sourceStatusClass}`}>
                   <span className="source-status-dot" />
@@ -393,6 +436,18 @@ export function SourcesStep({
                     <dt>Readable</dt>
                     <dd>{selectedAccessCheck ? (selectedAccessCheck.readable ? 'Yes' : 'No') : 'Unknown'}</dd>
                   </div>
+                  {selectedFolderSummary ? (
+                    <div className="source-property-row">
+                      <dt>Folder</dt>
+                      <dd>
+                        <span className="source-folder-summary" title={selectedFolderSummaryTitle}>
+                          {selectedFolderSummaryLines.map((line) => (
+                            <span key={line}>{line}</span>
+                          ))}
+                        </span>
+                      </dd>
+                    </div>
+                  ) : null}
                 </dl>
 
                 {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
@@ -402,10 +457,10 @@ export function SourcesStep({
                   <button
                     type="button"
                     className="secondary-button"
-                    disabled={!canChooseLocalFile || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId) || sourceMutationPending}
+                    disabled={!canChooseLocalPath || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId) || sourceMutationPending}
                     onClick={() => onChooseSourceFile(selectedSource.id)}
                   >
-                    {isSelectingSource ? 'Opening...' : selectedSourceFile ? 'Change local file' : 'Choose local file'}
+                    {getLocalPathActionLabel(selectedSource, isSelectingSource)}
                   </button>
                   <button
                     type="button"
