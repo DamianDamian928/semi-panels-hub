@@ -25,9 +25,8 @@ export const statusClassName: Record<ReviewStatus, string> = {
 
 export const sidebarSteps: SidebarStepDefinition[] = [
   { step: 'Sources', label: 'Sources', icon: 'sources' },
-  { step: 'Connections', label: 'Connections', icon: 'connections' },
-  { step: 'Validation', label: 'Validation', icon: 'validation' },
   { step: 'Comparison', label: 'Comparison', icon: 'comparison' },
+  { step: 'Validation', label: 'Validation', icon: 'validation' },
   { step: 'Decisions', label: 'Decisions', icon: 'decisions' },
   { step: 'Output', label: 'Output', icon: 'output' },
   { step: 'AI Assistant', label: 'AI Assistant', icon: 'aiAssistant' },

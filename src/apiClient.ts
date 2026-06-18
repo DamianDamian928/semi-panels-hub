@@ -98,6 +98,21 @@ export type SourcePreviewPayload = {
   rowLimit: number
 }
 
+export type DataContractPayload = {
+  id: string
+  targetId: string
+  role: string
+  sourceMatcher: Record<string, string>
+  sourceId: string | null
+  sourceName: string
+  sourcePath: string
+  sourceStatus: string | null
+  sheetName: string | null
+  fields: Record<string, string>
+  requiredColumns: string[]
+  status: 'Active' | 'Missing source' | 'Ambiguous source' | 'Source not ready'
+}
+
 export type StorageStatusPayload = {
   step: string
   storage: string
@@ -146,7 +161,10 @@ export type BomMatvarValidationPayload = {
     name: string
     status: string
     contractRole: string
+    contractId?: string
+    sheetName?: string | null
   }>
+  dataContracts: DataContractPayload[]
   bomL0Rows: Array<{
     sourceName: string
     sourcePath: string
@@ -203,6 +221,7 @@ export type BomMatvarComparisonPayload = {
     context: number
     sourceRows: number
   }
+  dataContracts: DataContractPayload[]
   rules: Array<{
     id: string
     rule: string
@@ -367,6 +386,7 @@ type BootstrapResponse = WorkflowPayload & {
   reviews: DashboardRow[]
   sources: SourceDefinition[]
   validationStatesBySource: Record<string, { state: ValidationState; message: string }>
+  dataContracts: DataContractPayload[]
   sourceConnectionsByTarget: SourceConnectionsByTarget | null
   sourceConnectionRolesByTarget: SourceConnectionRolesByTarget | null
   sourceReadStatus: SourceReadStatus

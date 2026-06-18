@@ -1,6 +1,6 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
-export type ProcessStep = 'Sources' | 'Connections' | 'Validation' | 'Comparison' | 'Decisions' | 'Output' | 'AI Assistant'
+export type ProcessStep = 'Sources' | 'Comparison' | 'Validation' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView = 'dashboard' | 'settings' | 'settings-diagnostics' | 'settings-design-template' | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 

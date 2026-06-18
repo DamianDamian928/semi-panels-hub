@@ -92,11 +92,13 @@ export function DecisionsStep({
   const filterOptions: DecisionFilter[] = ['All', 'Required', 'Drafted', 'Accepted', 'Deferred']
   const bomL0Rules = comparison?.rules ?? []
   const matvarRules = comparison?.matvarRules ?? []
-  const bomL0RulesSourceLabel = bomL0Rules[0]?.partNumber
-    ? 'BOM L0.xlsx / Arkusz1'
+  const bomL0Contract = comparison?.dataContracts?.find((contract) => contract.id === 'bom-matvar:bom-l0')
+  const matvarContract = comparison?.dataContracts?.find((contract) => contract.id === 'bom-matvar:matvar-rules')
+  const bomL0RulesSourceLabel = bomL0Contract?.sourceName
+    ? [bomL0Contract.sourceName, bomL0Contract.sheetName].filter(Boolean).join(' / ')
     : ''
-  const matvarRulesSourceLabel = matvarRules[0]
-    ? [matvarRules[0].sourceName, matvarRules[0].sourceSheet].filter(Boolean).join(' / ')
+  const matvarRulesSourceLabel = matvarContract?.sourceName
+    ? [matvarContract.sourceName, matvarContract.sheetName].filter(Boolean).join(' / ')
     : ''
   const decisionByIssueId = new Map(targetDecisionRows.map((decision) => [decision.issueId, decision]))
 

@@ -11,6 +11,7 @@ import {
   sources,
   validationStatesBySource,
 } from './seedData.mjs'
+import { resolveDataContracts } from './sourceContracts.mjs'
 import { buildSourceConnectionRolesByTarget, buildSourceConnectionsByTarget } from './sourceUsageModel.mjs'
 import { buildWorkflowView } from './workflowViewModel.mjs'
 
@@ -221,6 +222,9 @@ const getWorkflowSourceConnections = () =>
 const getWorkflowSourceConnectionRoles = () =>
   buildSourceConnectionRolesByTarget(listRecords('sources'))
 
+const getDataContracts = (targetId = null) =>
+  resolveDataContracts(listRecords('sources'), targetId)
+
 const saveSourceConnections = (connectionsByTarget) => {
   upsertRecord('source_connections', 'default', {
     connectionsByTarget,
@@ -364,7 +368,7 @@ const getStorageStatus = (step) => {
     },
     Connections: {
       storage: 'Generated',
-      subject: 'Connections',
+      subject: 'Data contracts',
       persistence: 'Derived from workflow comparison rules',
       records: sourceConnectionsCount,
       lastUpdated: null,
@@ -457,6 +461,7 @@ export const workflowRepository = {
   getSourceConnections,
   getWorkflowSourceConnections,
   getWorkflowSourceConnectionRoles,
+  getDataContracts,
   saveSourceConnections,
   getDashboardSourceReadStatus,
   saveDashboardSourceReadStatus,
@@ -475,6 +480,7 @@ export const workflowRepository = {
     reviews: listRecords('reviews'),
     sources: listRecords('sources'),
     validationStatesBySource: getValidationStates(),
+    dataContracts: getDataContracts(),
     sourceConnectionsByTarget: getWorkflowSourceConnections(),
     sourceConnectionRolesByTarget: getWorkflowSourceConnectionRoles(),
     sourceReadStatus: getDashboardSourceReadStatus(),

@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { WorkflowViewPayload } from '../apiClient'
 import type { OutputRow } from '../domain/workflowSelectors'
 import { useBomMatvarComparison } from '../hooks/useBomMatvarComparison'
@@ -42,7 +42,6 @@ import {
   statusClassName,
   validationStateClassName,
 } from './sharedReviewUi'
-import { ConnectionsStep, type ConnectionsStepHandle } from './steps/ConnectionsStep'
 import { DecisionsStep } from './steps/DecisionsStep'
 import { OutputStep } from './steps/OutputStep'
 import { SourcesStep } from './steps/SourcesStep'
@@ -73,11 +72,10 @@ const createDecisionRecordFromComparisonIssue = (issue: ReviewIssue): DecisionRe
 })
 
 const nextStepByProcess: Record<ProcessStep, { title: string; description: string }> = {
-  Sources: { title: 'Connections', description: 'Review source relationships as workflow context.' },
-  Connections: { title: 'Validation', description: 'Review source readiness before comparison.' },
-  Validation: { title: 'Comparison', description: 'Compare validated data and detect decision findings.' },
-  Comparison: { title: 'Decisions', description: 'Create auditable decision records from comparison findings.' },
-  Decisions: { title: 'Dashboard review', description: 'Decision data will feed the future Dashboard Open review.' },
+  Sources: { title: 'Comparison', description: 'Configure source tables and review comparison results.' },
+  Comparison: { title: 'Validation', description: 'Validate the configured comparison data contracts.' },
+  Validation: { title: 'Decisions', description: 'Create auditable decision records from comparison findings.' },
+  Decisions: { title: 'Output', description: 'Prepare controlled output from accepted decisions.' },
   Output: { title: 'AI Assistant', description: 'This area stays planned while Decision and Open review are defined.' },
   'AI Assistant': { title: 'Sources', description: 'This area stays planned while workflow data is stabilized.' },
 }
@@ -93,16 +91,6 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
     example: 'Fishbowl, Parts&BOM and documentation sources are visible before validation.',
     output: 'A global source catalog ready for connection.',
   },
-  Connections: {
-    eyebrow: 'Connections',
-    title: 'Generated source usage map',
-    summary: 'This screen shows source-to-target relationships generated from active workflow comparison contracts.',
-    goal: 'Understand which real sources are used by each workflow target.',
-    function: 'Displays the current source usage detected by validation and comparison rules.',
-    yourRole: 'Review whether the generated usage map matches the expected workflow context.',
-    example: 'BOM Matvar shows the BOM L0 and Mass Production sources selected by the comparison contract.',
-    output: 'Read-only source usage context for validation, comparison and decisions.',
-  },
   Validation: {
     eyebrow: 'Validation',
     title: 'Current review input readiness',
@@ -115,13 +103,13 @@ const stepPurposeContent: Record<ProcessStep, StepPurposeContent> = {
   },
   Comparison: {
     eyebrow: 'Comparison',
-    title: 'Current review difference detection',
-    summary: 'This screen previews how source differences become decision-ready findings for the selected review.',
-    goal: 'Detect meaningful differences.',
-    function: 'Groups comparison results and source context.',
-    yourRole: 'Look for differences that should become decisions.',
-    example: 'A missing expected match becomes a decision candidate.',
-    output: 'Findings ready for Decisions.',
+    title: 'Current review data configuration and difference detection',
+    summary: 'This screen shows code-defined data contracts and previews decision-ready findings for the selected review.',
+    goal: 'Use explicit data contracts to detect meaningful differences.',
+    function: 'Groups comparison data configuration, source context and rule results.',
+    yourRole: 'Review configured source tables and differences that should become decisions.',
+    example: 'BOM L0 and MATVAR tables are listed before their rules are evaluated.',
+    output: 'Contract-backed findings ready for Validation and Decisions.',
   },
   Decisions: {
     eyebrow: 'Decisions',
@@ -226,11 +214,6 @@ export function ReviewEditor({
   const [activeComparisonTargetId, setActiveComparisonTargetId] = useState<ConnectionTargetId>('bom-matvar')
   const [comparisonRefreshKey, setComparisonRefreshKey] = useState(0)
   const [reviewIssuesRefreshKey, setReviewIssuesRefreshKey] = useState(0)
-  const [pendingExitNavigation, setPendingExitNavigation] = useState<PendingExitNavigation | null>(null)
-  const [exitGuardSaving, setExitGuardSaving] = useState(false)
-  const [exitGuardError, setExitGuardError] = useState<string | null>(null)
-  const connectionsStepRef = useRef<ConnectionsStepHandle | null>(null)
-
   const currentProcessStep = activeProcessStep
   const {
     activeSourceId,
@@ -254,8 +237,6 @@ export function ReviewEditor({
     checkSourceAccess,
   })
   const {
-    activeConnectionTargetId,
-    setActiveConnectionTargetId,
     connectionsByTarget,
   } = useSourceConnections({
     sourceDefinitions,
@@ -337,19 +318,8 @@ export function ReviewEditor({
   }, [comparisonIssues, decisionRecords])
   const nextStep = nextStepByProcess[currentProcessStep]
   const purposeContent = stepPurposeContent[currentProcessStep]
-  const guardedStepLabel = currentProcessStep === 'Connections'
-    ? currentProcessStep
-    : 'current screen'
-
-  const getActiveExitGuard = () => {
-    if (currentProcessStep === 'Connections') return connectionsStepRef.current
-    return null
-  }
 
   const runExitNavigation = (navigation: PendingExitNavigation) => {
-    setPendingExitNavigation(null)
-    setExitGuardError(null)
-
     if (navigation.type === 'dashboard') {
       onBackToDashboard()
       return
@@ -386,13 +356,6 @@ export function ReviewEditor({
       return
     }
 
-    const activeGuard = getActiveExitGuard()
-    if (activeGuard?.hasUnsavedChanges()) {
-      setPendingExitNavigation(navigation)
-      setExitGuardError(null)
-      return
-    }
-
     runExitNavigation(navigation)
   }
 
@@ -404,38 +367,8 @@ export function ReviewEditor({
     requestExitNavigation({ type: 'dashboard' })
   }
 
-  const stayOnGuardedStep = () => {
-    setPendingExitNavigation(null)
-    setExitGuardError(null)
-  }
-
-  const discardAndContinue = () => {
-    if (!pendingExitNavigation) return
-
-    getActiveExitGuard()?.discardChanges()
-    runExitNavigation(pendingExitNavigation)
-  }
-
-  const saveAndContinue = async () => {
-    if (!pendingExitNavigation) return
-
-    const navigation = pendingExitNavigation
-    const activeGuard = getActiveExitGuard()
-    setExitGuardSaving(true)
-    setExitGuardError(null)
-
-    try {
-      await activeGuard?.saveChanges()
-      runExitNavigation(navigation)
-      if (navigation.type === 'step') setExitGuardSaving(false)
-    } catch (error: unknown) {
-      setExitGuardError(error instanceof Error ? error.message : 'Changes could not be saved.')
-      setExitGuardSaving(false)
-    }
-  }
-
   const renderSourceNamesStep = (
-    stepName: Exclude<ProcessStep, 'Connections'>,
+    stepName: ProcessStep,
     title: string,
     description: string,
     statusLabel: string,
@@ -796,11 +729,14 @@ export function ReviewEditor({
     const comparisonStatus: ValidationState = comparison?.status ?? 'Not checked'
     const rules = comparison?.rules ?? []
     const matvarRules = comparison?.matvarRules ?? []
-    const bomL0RulesSourceLabel = rules[0]?.partNumber
-      ? 'BOM L0.xlsx / Arkusz1'
+    const dataContracts = comparison?.dataContracts ?? []
+    const bomL0Contract = dataContracts.find((contract) => contract.id === 'bom-matvar:bom-l0')
+    const matvarContract = dataContracts.find((contract) => contract.id === 'bom-matvar:matvar-rules')
+    const bomL0RulesSourceLabel = bomL0Contract?.sourceName
+      ? [bomL0Contract.sourceName, bomL0Contract.sheetName].filter(Boolean).join(' / ')
       : ''
-    const matvarRulesSourceLabel = matvarRules[0]
-      ? [matvarRules[0].sourceName, matvarRules[0].sourceSheet].filter(Boolean).join(' / ')
+    const matvarRulesSourceLabel = matvarContract?.sourceName
+      ? [matvarContract.sourceName, matvarContract.sheetName].filter(Boolean).join(' / ')
       : ''
     const oracleComparison = comparison?.oracleComparison
     const oracleBaseRows = oracleComparison?.baseRows ?? []
@@ -823,6 +759,57 @@ export function ReviewEditor({
       if (status === 'Fallback' || status === 'Info') return validationStateClassName.Warning
       return validationStateClassName.Error
     }
+
+    const getContractStatusClass = (status: string) => {
+      if (status === 'Active') return validationStateClassName.Valid
+      if (status === 'Missing source' || status === 'Ambiguous source') return validationStateClassName.Error
+      return validationStateClassName.Warning
+    }
+
+    const renderDataConfiguration = () => (
+      <>
+        <p className="source-detail-section-title">Data contracts</p>
+        {dataContracts.length ? (
+          <div className="table-wrap comparison-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Role</th>
+                  <th>Source</th>
+                  <th>Sheet</th>
+                  <th>Columns</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dataContracts.map((contract) => (
+                  <tr key={contract.id}>
+                    <td>
+                      <span className={getContractStatusClass(contract.status)}>{contract.status}</span>
+                    </td>
+                    <td>{contract.role}</td>
+                    <td title={contract.sourcePath || undefined}>{contract.sourceName || 'Not matched'}</td>
+                    <td>{contract.sheetName ?? '-'}</td>
+                    <td>
+                      <div className="comparison-rule-basis">
+                        {contract.requiredColumns.map((column) => (
+                          <span key={`${contract.id}-${column}`}>{column}</span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="source-registry-empty">
+            <strong>No data contracts</strong>
+            <p>Comparison has not returned source table configuration for this target.</p>
+          </div>
+        )}
+      </>
+    )
 
     const renderTargetDetails = () => {
       if (activeComparisonTarget.id !== 'bom-matvar') {
@@ -913,6 +900,8 @@ export function ReviewEditor({
           </div>
 
           {bomMatvarComparisonError ? <p className="impact-error">{bomMatvarComparisonError}</p> : null}
+
+          {renderDataConfiguration()}
 
           <p className="source-detail-section-title">
             BOM L0 rules{bomL0RulesSourceLabel ? ` (${bomL0RulesSourceLabel})` : ''}
@@ -1198,18 +1187,6 @@ export function ReviewEditor({
         />
       )
     }
-    if (currentProcessStep === 'Connections') {
-      return (
-        <ConnectionsStep
-          ref={connectionsStepRef}
-          activeConnectionTargetId={activeConnectionTargetId}
-          connectionsByTarget={connectionsByTarget}
-          connectionRolesByTarget={sourceConnectionRolesByTarget}
-          sourceDefinitions={sourceDefinitions}
-          onSelectConnectionTarget={setActiveConnectionTargetId}
-        />
-      )
-    }
     if (currentProcessStep === 'Validation') return renderValidationStep()
     if (currentProcessStep === 'Comparison') return renderComparisonStep()
     if (currentProcessStep === 'Decisions') {
@@ -1308,7 +1285,7 @@ export function ReviewEditor({
             <p className="eyebrow">Admin project edit</p>
             <h1>{selectedReview.intelModel}</h1>
             <p className="page-subtitle">
-              Sources and Connections provide context. Validation to Decisions are scoped to this review.
+              Sources provide available inputs. Comparison defines data configuration; Validation to Output are scoped to this review.
             </p>
           </div>
           <div className="header-meta">
@@ -1384,38 +1361,6 @@ export function ReviewEditor({
           </div>
         )}
 
-        {pendingExitNavigation ? (
-          <div className="impact-modal-overlay" role="dialog" aria-modal="true" aria-label="Unsaved changes">
-            <div className="impact-modal">
-              <div className="impact-modal-header">
-                <p className="section-label">Unsaved changes</p>
-                <h3>Leave {guardedStepLabel}?</h3>
-                <p>You have unsaved changes on this screen. Save them before leaving, discard them, or stay here.</p>
-              </div>
-
-              {exitGuardError ? <p className="impact-error">{exitGuardError}</p> : null}
-
-              <div className="impact-modal-actions">
-                <button type="button" className="secondary-button" onClick={stayOnGuardedStep} disabled={exitGuardSaving}>
-                  Stay here
-                </button>
-                <button type="button" className="secondary-button" onClick={discardAndContinue} disabled={exitGuardSaving}>
-                  Discard changes
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => {
-                    void saveAndContinue()
-                  }}
-                  disabled={exitGuardSaving}
-                >
-                  {exitGuardSaving ? 'Saving...' : 'Save and continue'}
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
       </main>
     </div>
   )

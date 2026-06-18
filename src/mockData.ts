@@ -128,7 +128,7 @@ export const sourceDefinitions: SourceDefinition[] = [
     expectedFormat: 'MATVAR Excel export',
     lastChecked: 'Not checked',
     owner: 'Damian',
-    description: 'Manual MATVAR export that will be connected to MATVAR analysis in the Connections step.',
+    description: 'Manual MATVAR export that will be connected to MATVAR analysis through Comparison data contracts.',
     accessMode: 'Read-only',
   },
   {

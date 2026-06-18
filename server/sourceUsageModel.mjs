@@ -1,3 +1,5 @@
+import { resolveDataContracts } from './sourceContracts.mjs'
+
 export const connectionTargetIds = [
   'dashboard',
   'bom-matvar',
@@ -70,26 +72,31 @@ export const findBestSourceEntry = (entries, role, preferredTerms) =>
 
 export const buildSourceConnectionsByTarget = (sources) => {
   const connectionsByTarget = createEmptySourceConnectionsByTarget()
-  const sourceEntries = buildSourceContractEntries(sources)
-  const bomL0Entry = findBestSourceEntry(sourceEntries, 'BOM L0', ['bom l0', 'bom_l0', 'bom-l0', 'boml0'])
-  const matvarBomEntry = findBestSourceEntry(sourceEntries, 'Mass Production', ['mass production', 'matvar'])
+  const contracts = resolveDataContracts(sources)
 
-  connectionsByTarget['bom-matvar'] = [
-    bomL0Entry?.source.id,
-    matvarBomEntry?.source.id,
-  ].filter(Boolean)
+  contracts.forEach((contract) => {
+    if (!contract.sourceId) return
+    const targetConnections = connectionsByTarget[contract.targetId] ?? []
+    if (!targetConnections.includes(contract.sourceId)) {
+      targetConnections.push(contract.sourceId)
+    }
+    connectionsByTarget[contract.targetId] = targetConnections
+  })
 
   return connectionsByTarget
 }
 
 export const buildSourceConnectionRolesByTarget = (sources) => {
   const rolesByTarget = createEmptySourceConnectionRolesByTarget()
-  const sourceEntries = buildSourceContractEntries(sources)
-  const bomL0Entry = findBestSourceEntry(sourceEntries, 'BOM L0', ['bom l0', 'bom_l0', 'bom-l0', 'boml0'])
-  const matvarBomEntry = findBestSourceEntry(sourceEntries, 'Mass Production', ['mass production', 'matvar'])
+  const contracts = resolveDataContracts(sources)
 
-  if (bomL0Entry?.source.id) rolesByTarget['bom-matvar'][bomL0Entry.source.id] = bomL0Entry.contractRole
-  if (matvarBomEntry?.source.id) rolesByTarget['bom-matvar'][matvarBomEntry.source.id] = matvarBomEntry.contractRole
+  contracts.forEach((contract) => {
+    if (!contract.sourceId) return
+    const currentRole = rolesByTarget[contract.targetId][contract.sourceId]
+    rolesByTarget[contract.targetId][contract.sourceId] = currentRole
+      ? `${currentRole}, ${contract.role}`
+      : contract.role
+  })
 
   return rolesByTarget
 }

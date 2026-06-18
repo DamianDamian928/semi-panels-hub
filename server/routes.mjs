@@ -4,11 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { basename, dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readExcelPreview, readExcelWorksheet } from './excelPreview.mjs'
-import {
-  buildSourceContractEntries,
-  connectionTargetIds as sourceConnectionTargetIds,
-  findBestSourceEntry,
-} from './sourceUsageModel.mjs'
+import { connectionTargetIds as sourceConnectionTargetIds } from './sourceUsageModel.mjs'
 import { workflowActions } from './workflowActions.mjs'
 import { workflowRepository } from './workflowRepository.mjs'
 
@@ -485,20 +481,12 @@ const expectedOracleName = (intelDescription, scope) => {
   return ''
 }
 
-const findOracleFolderSource = () =>
-  workflowRepository.getSources().find((source) => {
-    const text = [
-      source.name,
-      source.sourceFile?.name,
-      source.sourceFile?.path,
-      source.location,
-    ].join(' ').toLowerCase()
+const findOracleFolderSource = () => {
+  const oracleContract = workflowRepository.getDataContracts('bom-matvar')
+    .find((contract) => contract.id === 'bom-matvar:oracle-structure' && contract.sourceId)
 
-    return source.type === 'Folder' &&
-      source.status === 'Ready' &&
-      source.sourceFile?.path &&
-      text.includes('matvar')
-  })
+  return oracleContract ? workflowRepository.getSource(oracleContract.sourceId) : null
+}
 
 const findOracleReportFile = async (folderPath, item) => {
   const normalizedItem = String(item ?? '').trim().toLowerCase()
@@ -664,24 +652,31 @@ const buildBomMatvarValidation = async (reviewId) => {
     return null
   }
 
-  const connectedSourceIds = workflowRepository.getWorkflowSourceConnections()['bom-matvar'] ?? []
-  const connectedSources = connectedSourceIds
-    .map((sourceId) => workflowRepository.getSource(sourceId))
-    .filter(Boolean)
-  const connectedSourceEntries = buildSourceContractEntries(connectedSources)
+  const connectedContracts = workflowRepository.getDataContracts('bom-matvar')
+  const connectedSourceEntries = connectedContracts
+    .filter((contract) => contract.sourceId)
+    .map((contract) => ({
+      contract,
+      contractRole: contract.role,
+      source: workflowRepository.getSource(contract.sourceId),
+    }))
+    .filter((entry) => entry.source)
+  const connectedSources = [...new Map(connectedSourceEntries.map((entry) => [entry.source.id, entry.source])).values()]
   const checks = []
   const intelDescription = getReviewIntelDescription(review).trim()
-  const buildConnectedSourceRows = () => connectedSourceEntries.map(({ source, contractRole }) => ({
+  const buildConnectedSourceRows = () => connectedSourceEntries.map(({ source, contractRole, contract }) => ({
     id: source.id,
     name: source.sourceFile?.name ?? source.name,
     status: source.status,
     contractRole,
+    contractId: contract.id,
+    sheetName: contract.sheetName,
   }))
   const buildSummary = ({ bomL0Rows = [], matvarRows = [] } = {}) => {
     const invalidPartNumberCount = bomL0Rows.filter((row) => !row.partNumberValid).length
     return {
       connectedSources: connectedSources.length,
-      contractSources: connectedSourceEntries.filter((entry) => ['BOM L0', 'Mass Production'].includes(entry.contractRole)).length,
+      contractSources: connectedSourceEntries.length,
       matchedRows: bomL0Rows.length,
       validPartNumbers: bomL0Rows.filter((row) => row.partNumberValid).length,
       invalidPartNumbers: invalidPartNumberCount,
@@ -712,15 +707,20 @@ const buildBomMatvarValidation = async (reviewId) => {
       : 'No sources are available for BOM Matvar contract detection.',
   }))
 
-  const bomL0Entry = findBestSourceEntry(connectedSourceEntries, 'BOM L0', ['bom l0', 'bom_l0', 'bom-l0', 'boml0'])
-  const matvarBomEntry = findBestSourceEntry(connectedSourceEntries, 'Mass Production', ['mass production', 'matvar'])
+  const bomL0Contract = connectedContracts.find((contract) => contract.id === 'bom-matvar:bom-l0')
+  const matvarContract = connectedContracts.find((contract) => contract.id === 'bom-matvar:matvar-rules')
+  const bomL0Source = bomL0Contract?.sourceId ? workflowRepository.getSource(bomL0Contract.sourceId) : null
+  const matvarSource = matvarContract?.sourceId ? workflowRepository.getSource(matvarContract.sourceId) : null
 
-  if (!bomL0Entry) {
+  if (!bomL0Source || bomL0Contract.status !== 'Active') {
     checks.push(createValidationCheck({
       id: 'bom-l0-source',
       label: 'BOM L0 source',
       status: 'Error',
-      message: 'BOM L0 source was not found in the available source registry.',
+      message: bomL0Contract?.status === 'Missing source'
+        ? 'BOM L0 source contract points to a source that is not registered.'
+        : `BOM L0 source contract is ${bomL0Contract?.status ?? 'Missing contract'}.`,
+      detail: bomL0Contract?.sourceMatcher ? JSON.stringify(bomL0Contract.sourceMatcher) : '',
     }))
 
     return {
@@ -734,12 +734,12 @@ const buildBomMatvarValidation = async (reviewId) => {
       summary: buildSummary(),
       checks,
       connectedSources: buildConnectedSourceRows(),
+      dataContracts: connectedContracts,
       bomL0Rows: [],
       matvarRows: [],
     }
   }
 
-  const { source: bomL0Source } = bomL0Entry
   const bomL0SourceName = bomL0Source.sourceFile?.name ?? bomL0Source.name
   const bomL0SourcePath = bomL0Source.sourceFile?.path ?? bomL0Source.location
 
@@ -758,12 +758,14 @@ const buildBomMatvarValidation = async (reviewId) => {
 
   if (bomL0Source.sourceFile?.path) {
     try {
-      const worksheet = await readExcelWorksheet(bomL0Source.sourceFile.path)
+      const worksheet = await readExcelWorksheet(bomL0Source.sourceFile.path, {
+        sheetName: bomL0Contract.sheetName,
+      })
       const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
       const contractColumns = {
-        partNumber: getColumnByAliases(worksheet.columns, ['Part Number', 'PartNumber', 'Part_No', 'BOM L0 Part Number']),
-        description: getColumnByAliases(worksheet.columns, ['Description', 'BOM L0 Description']),
-        updatedAt: getColumnByAliases(worksheet.columns, ['Data aktualizacji', 'Update Date', 'BOM L0 Data aktualizacji']),
+        partNumber: getColumnByAliases(worksheet.columns, [bomL0Contract.fields.partNumber]),
+        description: getColumnByAliases(worksheet.columns, [bomL0Contract.fields.description]),
+        updatedAt: getColumnByAliases(worksheet.columns, [bomL0Contract.fields.updatedAt]),
       }
       const requiredColumns = [
         { key: 'partNumber', label: 'Part Number', column: contractColumns.partNumber },
@@ -843,16 +845,17 @@ const buildBomMatvarValidation = async (reviewId) => {
   let matvarRows = []
   let matvarSourceRows = []
 
-  if (!matvarBomEntry) {
+  if (!matvarSource || matvarContract.status !== 'Active') {
     checks.push(createValidationCheck({
       id: 'matvar-bom-source',
       label: 'MATVAR BOM source',
       status: 'Error',
-      message: 'Mass Production source was not found in the available source registry.',
-      detail: 'Required source contract: sheet "Semi Panels List" with Item, ORACLE Item Description, INTEL Description, Tool/Phantom L1 and Scope.',
+      message: matvarContract?.status === 'Missing source'
+        ? 'MATVAR source contract points to a source that is not registered.'
+        : `MATVAR source contract is ${matvarContract?.status ?? 'Missing contract'}.`,
+      detail: matvarContract?.sourceMatcher ? JSON.stringify(matvarContract.sourceMatcher) : '',
     }))
   } else {
-    const { source: matvarSource } = matvarBomEntry
     const sourceName = matvarSource.sourceFile?.name ?? matvarSource.name
     const sourcePath = matvarSource.sourceFile?.path ?? matvarSource.location
 
@@ -870,15 +873,15 @@ const buildBomMatvarValidation = async (reviewId) => {
     if (matvarSource.sourceFile?.path) {
       try {
         const worksheet = await readExcelWorksheet(matvarSource.sourceFile.path, {
-          sheetName: 'Semi Panels List',
+          sheetName: matvarContract.sheetName,
         })
         const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
         const contractColumns = {
-          item: getColumnByAliases(worksheet.columns, ['Item']),
-          oracleItemDescription: getColumnByAliases(worksheet.columns, ['ORACLE Item Description', 'ORACLE Item Desc', 'ORACLE Description']),
-          intelDescription: getColumnByAliases(worksheet.columns, ['INTEL Description', 'INTEL Description (C)', 'Intel Description']),
-          phantomL1: getColumnByAliases(worksheet.columns, ['Tool', 'Tool ID', 'Phantom L1', 'PHANTOM L1', 'PhantomL1']),
-          scope: getColumnByAliases(worksheet.columns, ['Scope', 'SCOPE']),
+          item: getColumnByAliases(worksheet.columns, [matvarContract.fields.item]),
+          oracleItemDescription: getColumnByAliases(worksheet.columns, [matvarContract.fields.oracleItemDescription]),
+          intelDescription: getColumnByAliases(worksheet.columns, [matvarContract.fields.intelDescription]),
+          phantomL1: getColumnByAliases(worksheet.columns, [matvarContract.fields.phantomL1]),
+          scope: getColumnByAliases(worksheet.columns, [matvarContract.fields.scope]),
         }
         const requiredMatvarColumns = [
           { key: 'item', label: 'Item', column: contractColumns.item },
@@ -947,16 +950,16 @@ const buildBomMatvarValidation = async (reviewId) => {
   const matvarSyntheticCount = matvarRows.filter((row) => row.isSynthetic).length
 
   connectedSourceEntries
-    .filter(({ source }) => source.id !== bomL0Source.id && source.id !== matvarBomEntry?.source.id)
+    .filter(({ source }) => source.id !== bomL0Source.id && source.id !== matvarSource?.id)
     .forEach(({ source, contractRole }) => {
       const sourceName = source.sourceFile?.name ?? source.name
 
       checks.push(createValidationCheck({
         id: `bom-matvar-extra-source-${source.id}`,
-        label: 'Additional BOM Matvar source',
+        label: 'Comparison-only source',
         source: sourceName,
-        status: 'Warning',
-        message: 'Source is available but is not used by the current MATVAR validation contract.',
+        status: 'Valid',
+        message: 'Source is configured for BOM Matvar comparison and will be checked during comparison.',
         detail: contractRole,
       }))
     })
@@ -971,7 +974,7 @@ const buildBomMatvarValidation = async (reviewId) => {
     status: getValidationStatus(checks),
     summary: {
       connectedSources: connectedSources.length,
-      contractSources: connectedSourceEntries.filter((entry) => ['BOM L0', 'Mass Production'].includes(entry.contractRole)).length,
+      contractSources: connectedSourceEntries.length,
       matchedRows: bomL0Rows.length,
       validPartNumbers: bomL0Rows.filter((row) => row.partNumberValid).length,
       invalidPartNumbers: invalidPartNumberCount,
@@ -982,6 +985,7 @@ const buildBomMatvarValidation = async (reviewId) => {
     },
     checks,
     connectedSources: buildConnectedSourceRows(),
+    dataContracts: connectedContracts,
     bomL0Rows,
     matvarSourceRows,
     matvarRows,
@@ -1243,6 +1247,7 @@ const buildBomMatvarComparison = async (reviewId) => {
         matvarSourceTableRows.filter((rule) => rule.status === 'Context').length,
       sourceRows: rows.length,
     },
+    dataContracts: validation.dataContracts ?? [],
     rules,
     matvarSourceRows: matvarSourceTableRows,
     matvarRules: matvarComparisonRules,
