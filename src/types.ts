@@ -25,6 +25,7 @@ export type DashboardRow = {
   status: ReviewStatus
   owner: string
   lastUpdated: string
+  forecastStatus?: string
   dashboardColumns?: string[]
   dashboardCells?: Record<string, string>
 }

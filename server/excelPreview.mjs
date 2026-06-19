@@ -151,13 +151,13 @@ const readRows = (sheetXml, sharedStrings, maxRows = Number.POSITIVE_INFINITY) =
     const rowNumber = Number(rowMatch[1])
     const cells = []
 
-    for (const cellMatch of rowMatch[2].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    for (const cellMatch of rowMatch[2].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
       const attrs = cellMatch[1]
       const cellRef = attrs.match(/\br="([^"]+)"/)?.[1]
       if (!cellRef) continue
 
       const columnIndex = getCellColumnIndex(cellRef)
-      cells[columnIndex] = getCellValue(`<c ${attrs}>${cellMatch[2]}</c>`, sharedStrings)
+      cells[columnIndex] = getCellValue(`<c ${attrs}>${cellMatch[2] ?? ''}</c>`, sharedStrings)
     }
 
     if (cells.some((value) => value !== undefined && value !== '')) {

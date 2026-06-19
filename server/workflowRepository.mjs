@@ -477,7 +477,7 @@ export const workflowRepository = {
   getStorageStatus,
 
   getBootstrapPayload: () => ({
-    reviews: listRecords('reviews'),
+    reviews: [],
     sources: listRecords('sources'),
     validationStatesBySource: getValidationStates(),
     dataContracts: getDataContracts(),

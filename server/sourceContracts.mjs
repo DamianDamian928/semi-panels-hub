@@ -9,8 +9,9 @@ export const dataContractDefinitions = [
       item: 'Item',
       oracleItemDescription: 'ORACLE Item Description',
       intelDescription: 'INTEL Description',
+      scope: 'Scope',
     },
-    requiredColumns: ['Item', 'ORACLE Item Description', 'INTEL Description'],
+    requiredColumns: ['Item', 'ORACLE Item Description', 'INTEL Description', 'Scope'],
   },
   {
     id: 'bom-matvar:bom-l0',

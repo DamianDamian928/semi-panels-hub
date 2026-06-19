@@ -174,6 +174,7 @@ const previewableFileExtensions = new Set(['xlsx', 'xlsm'])
 const normalizeDashboardField = (value) => String(value ?? '').trim().toLowerCase()
 const normalizeColumnField = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
 const partNumberPattern = /^\d+-\d+$/
+const forecastStatusPriority = ['ORDERED', 'FORECAST', 'PLACED']
 
 const getDashboardCellByName = (review, fieldName) => {
   const normalizedFieldName = normalizeDashboardField(fieldName)
@@ -196,6 +197,180 @@ const getReviewItem = (review) =>
 const getColumnByAliases = (columns, aliases) => {
   const normalizedAliases = aliases.map(normalizeColumnField)
   return columns.find((column) => normalizedAliases.includes(normalizeColumnField(column))) ?? ''
+}
+
+class SourcePolicyError extends Error {
+  constructor(message, detail = '') {
+    super(message)
+    this.name = 'SourcePolicyError'
+    this.detail = detail
+  }
+}
+
+const requireConfiguredContractSource = (contractId, targetId = null) => {
+  const contract = workflowRepository.getDataContracts(targetId).find((item) => item.id === contractId)
+
+  if (!contract) {
+    throw new SourcePolicyError(
+      `Required source contract "${contractId}" is not configured.`,
+      'API reads are allowed only through Sources and source contracts.',
+    )
+  }
+
+  if (contract.status !== 'Active') {
+    throw new SourcePolicyError(
+      `Required source contract "${contractId}" is ${contract.status}.`,
+      contract.sourceMatcher ? JSON.stringify(contract.sourceMatcher) : '',
+    )
+  }
+
+  const source = contract.sourceId ? workflowRepository.getSource(contract.sourceId) : null
+  const sourcePath = source?.sourceFile?.path
+
+  if (!source || !sourcePath) {
+    throw new SourcePolicyError(
+      `Required source contract "${contractId}" does not resolve to a registered local Source path.`,
+      contract.sourceMatcher ? JSON.stringify(contract.sourceMatcher) : '',
+    )
+  }
+
+  return {
+    contract,
+    source,
+    sourcePath,
+    sourceName: source.sourceFile?.name ?? source.name,
+  }
+}
+
+const normalizeForecastLookupValue = (value) => String(value ?? '').trim().toLowerCase()
+
+const normalizeForecastStatus = (value) => String(value ?? '').trim().toUpperCase()
+
+const forecastModelMatchesIntelDescription = (forecastModel, intelDescription) => {
+  const model = normalizeForecastLookupValue(forecastModel)
+  const target = normalizeForecastLookupValue(intelDescription)
+
+  if (!model || !target) return false
+
+  return model === target || model.startsWith(`${target}-`)
+}
+
+const chooseForecastStatus = (statuses) =>
+  forecastStatusPriority.find((status) => statuses.has(status)) ?? ''
+
+const createLiveSourceReadStatus = ({ source, sourcePath, rows }) => ({
+  status: 'Live',
+  sourceReadAt: new Date().toISOString(),
+  sourceReadAtLabel: new Date().toISOString().replace('T', ' ').slice(0, 19),
+  sourceModifiedAt: source.sourceFile?.modifiedAt ?? null,
+  sourceFileName: source.sourceFile?.name ?? source.name,
+  message: 'Dashboard source is read live from the file registered in Sources.',
+  sourceId: source.id,
+  sourcePath,
+  sourceSizeBytes: source.sourceFile?.sizeBytes ?? null,
+  rows,
+})
+
+const readDashboardRowsFromSource = async () => {
+  const { contract, source, sourcePath } = requireConfiguredContractSource('dashboard:mass-production', 'dashboard')
+  const worksheet = await readExcelWorksheet(sourcePath, { sheetName: contract.sheetName })
+  const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
+  const dashboardColumns = [
+    contract.fields.item,
+    contract.fields.scope,
+    contract.fields.oracleItemDescription,
+    contract.fields.intelDescription,
+  ]
+  const missingColumns = dashboardColumns.filter((column) => !(column in columnIndexByName))
+
+  if (missingColumns.length) {
+    throw new SourcePolicyError(
+      `Dashboard source is missing required column(s): ${missingColumns.join(', ')}.`,
+      `${source.sourceFile?.name ?? source.name} / ${contract.sheetName}`,
+    )
+  }
+
+  const reviews = worksheet.rows
+    .map((row, index) => {
+      const dashboardCells = Object.fromEntries(
+        dashboardColumns.map((column) => [column, String(row[columnIndexByName[column]] ?? '').trim()]),
+      )
+      const intelModel = dashboardCells[contract.fields.item] || dashboardCells[contract.fields.intelDescription] || `dashboard-row-${index + 1}`
+
+      return {
+        id: `dashboard-${source.id}-${index + 1}`,
+        intelModel,
+        status: 'Draft',
+        owner: 'Unassigned',
+        lastUpdated: source.sourceFile?.modifiedAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+        dashboardColumns,
+        dashboardCells,
+      }
+    })
+    .filter((row) => dashboardColumns.some((column) => row.dashboardCells[column]))
+
+  return {
+    reviews,
+    sourceReadStatus: createLiveSourceReadStatus({ source, sourcePath, rows: reviews.length }),
+  }
+}
+
+const getLiveReview = async (reviewId) => {
+  const { reviews } = await readDashboardRowsFromSource()
+  return reviews.find((review) => review.id === reviewId) ?? null
+}
+
+const readForecastStatusByIntelDescription = async (reviews) => {
+  const { sourcePath } = requireConfiguredContractSource('dashboard:mass-production', 'dashboard')
+
+  const worksheet = await readExcelWorksheet(sourcePath, { sheetName: 'Forecast' })
+  const modelColumn = getColumnByAliases(worksheet.columns, ['INTEL MODEL NUMBER ITEM'])
+  const statusColumn = getColumnByAliases(worksheet.columns, ['Status'])
+  const intelPoColumn = getColumnByAliases(worksheet.columns, ['INTEL PO #'])
+  if (!modelColumn || !statusColumn) return new Map()
+
+  const modelColumnIndex = worksheet.columns.findIndex((column) => column === modelColumn)
+  const statusColumnIndex = worksheet.columns.findIndex((column) => column === statusColumn)
+  const intelPoColumnIndex = intelPoColumn
+    ? worksheet.columns.findIndex((column) => column === intelPoColumn)
+    : -1
+  const result = new Map()
+
+  reviews.forEach((review) => {
+    const intelDescription = getReviewIntelDescription(review)
+    const statuses = new Set()
+
+    worksheet.rows.forEach((row) => {
+      if (!forecastModelMatchesIntelDescription(row[modelColumnIndex], intelDescription)) return
+
+      const status = normalizeForecastStatus(row[statusColumnIndex])
+      if (forecastStatusPriority.includes(status)) statuses.add(status)
+
+      const intelPoStatus = intelPoColumnIndex >= 0 ? normalizeForecastStatus(row[intelPoColumnIndex]) : ''
+      if (intelPoStatus === 'FORECAST') statuses.add('FORECAST')
+    })
+
+    const forecastStatus = chooseForecastStatus(statuses)
+    if (forecastStatus) result.set(review.id, forecastStatus)
+  })
+
+  return result
+}
+
+const buildBootstrapPayload = async () => {
+  const payload = workflowRepository.getBootstrapPayload()
+  const { reviews, sourceReadStatus } = await readDashboardRowsFromSource()
+
+  const forecastStatusByReviewId = await readForecastStatusByIntelDescription(reviews)
+
+  return {
+    ...payload,
+    reviews: reviews.map((review) => ({
+      ...review,
+      forecastStatus: forecastStatusByReviewId.get(review.id) ?? undefined,
+    })),
+    sourceReadStatus,
+  }
 }
 
 const parseExcelSerialDate = (value) => {
@@ -481,12 +656,8 @@ const expectedOracleName = (intelDescription, scope) => {
   return ''
 }
 
-const findOracleFolderSource = () => {
-  const oracleContract = workflowRepository.getDataContracts('bom-matvar')
-    .find((contract) => contract.id === 'bom-matvar:oracle-structure' && contract.sourceId)
-
-  return oracleContract ? workflowRepository.getSource(oracleContract.sourceId) : null
-}
+const findOracleFolderSource = () =>
+  requireConfiguredContractSource('bom-matvar:oracle-structure', 'bom-matvar').source
 
 const findOracleReportFile = async (folderPath, item) => {
   const normalizedItem = String(item ?? '').trim().toLowerCase()
@@ -646,7 +817,7 @@ const buildOracleComparisonTables = async ({ matvarRows, reviewIntelDescription 
 }
 
 const buildBomMatvarValidation = async (reviewId) => {
-  const review = workflowRepository.getReview(reviewId)
+  const review = await getLiveReview(reviewId)
 
   if (!review) {
     return null
@@ -1424,7 +1595,6 @@ const checkAndSaveAllSources = async () => {
 
 const getRoutes = ({ host, port }) => ({
   'GET /health': () => ({ ok: true, service: 'semi-panels-hub-api', database: workflowRepository.getDatabaseInfo() }),
-  'GET /api/reviews': () => workflowRepository.getReviews(),
   'GET /api/sources': () => workflowRepository.getSources(),
   'GET /api/validation-states': () => workflowRepository.getValidationStates(),
   'GET /api/review-issues': () => workflowRepository.getReviewIssues(),
@@ -1436,6 +1606,7 @@ const getRoutes = ({ host, port }) => ({
 })
 
 export const createRequestHandler = ({ host, port }) => async (request, response) => {
+  try {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, corsHeaders)
     response.end()
@@ -1447,7 +1618,18 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
   if (routeKey === 'GET /api/bootstrap') {
     await ensureDashboardSourceFresh({ forceRead: url.searchParams.get('sourceRead') === 'force' })
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
+    return
+  }
+
+  if (routeKey === 'GET /api/reviews') {
+    const { reviews } = await readDashboardRowsFromSource()
+    const forecastStatusByReviewId = await readForecastStatusByIntelDescription(reviews)
+
+    sendJson(response, 200, reviews.map((review) => ({
+      ...review,
+      forecastStatus: forecastStatusByReviewId.get(review.id) ?? undefined,
+    })))
     return
   }
 
@@ -1492,7 +1674,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
       message: 'Source registered. Waiting for location and access check.',
     })
 
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
     return
   }
 
@@ -1507,13 +1689,13 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     workflowRepository.deleteSource(sourceId)
     workflowRepository.deleteValidationState(source.name)
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
     return
   }
 
   if (request.method === 'POST' && url.pathname === '/api/sources/check') {
     await checkAndSaveAllSources()
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
     return
   }
 
@@ -1533,7 +1715,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
     }
 
     workflowRepository.saveSourceConnections(body.connectionsByTarget)
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
     return
   }
 
@@ -1547,7 +1729,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
     }
 
     await checkAndSaveSource(source)
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
     return
   }
 
@@ -1685,7 +1867,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
       message: `Local ${isFolderSource ? 'folder' : 'file'} registered: ${body.file.name}. Waiting for access check.`,
     })
 
-    sendJson(response, 200, workflowRepository.getBootstrapPayload())
+    sendJson(response, 200, await buildBootstrapPayload())
     return
   }
 
@@ -1713,7 +1895,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
   if (url.pathname.startsWith('/api/reviews/') && request.method === 'GET') {
     const reviewId = url.pathname.split('/')[3]
-    const review = workflowRepository.getReview(reviewId)
+    const review = await getLiveReview(reviewId)
 
     if (!review) {
       sendJson(response, 404, { error: 'Review not found' })
@@ -1732,4 +1914,18 @@ export const createRequestHandler = ({ host, port }) => async (request, response
   }
 
   sendJson(response, 200, handler())
+  } catch (error) {
+    if (error instanceof SourcePolicyError) {
+      sendJson(response, 409, {
+        error: error.message,
+        detail: error.detail,
+        policy: 'API reads must use the local path registered in Sources for the matching source contract.',
+      })
+      return
+    }
+
+    sendJson(response, 500, {
+      error: error instanceof Error ? error.message : 'Unexpected API error',
+    })
+  }
 }

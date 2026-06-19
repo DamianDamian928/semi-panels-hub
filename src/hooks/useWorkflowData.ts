@@ -22,7 +22,6 @@ import {
 import type { OutputRow } from '../domain/workflowSelectors'
 import {
   auditEvents as fallbackAuditEvents,
-  dashboardRows as fallbackDashboardRows,
   decisionRecords as fallbackDecisionRecords,
   outputItems as fallbackOutputItems,
   reviewIssues as fallbackReviewIssues,
@@ -33,6 +32,7 @@ import type {
   ApiConnectionState,
   AuditEvent,
   ConnectionTargetId,
+  DashboardRow,
   DecisionRecord,
   DecisionState,
   DecisionStatus,
@@ -59,7 +59,7 @@ const getApiFailureMessage = (error: unknown, fallbackMessage: string) => {
 }
 
 export const useWorkflowData = () => {
-  const [dashboardRows, setDashboardRows] = useState(fallbackDashboardRows)
+  const [dashboardRows, setDashboardRows] = useState<DashboardRow[]>([])
   const [sourceDefinitions, setSourceDefinitions] = useState(fallbackSourceDefinitions)
   const [validationStatesBySource, setValidationStatesBySource] = useState(fallbackValidationStatesBySource)
   const [reviewIssues, setReviewIssues] = useState(fallbackReviewIssues)
@@ -111,7 +111,7 @@ export const useWorkflowData = () => {
   }
 
   const applyFallbackPayload = () => {
-    setDashboardRows(fallbackDashboardRows)
+    setDashboardRows([])
     setSourceDefinitions(fallbackSourceDefinitions)
     setValidationStatesBySource(fallbackValidationStatesBySource)
     setReviewIssues(fallbackReviewIssues)
@@ -135,7 +135,7 @@ export const useWorkflowData = () => {
     } catch (error: unknown) {
       applyFallbackPayload()
       setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Using demo data.'))
+      setApiConnectionError(getApiFailureMessage(error, 'Live source data could not be loaded.'))
       throw error
     }
   }
@@ -154,7 +154,7 @@ export const useWorkflowData = () => {
         if (!isMounted) return
         applyFallbackPayload()
         setApiConnectionState(getApiFailureState(error))
-        setApiConnectionError(getApiFailureMessage(error, 'Using demo data.'))
+        setApiConnectionError(getApiFailureMessage(error, 'Live source data could not be loaded.'))
       })
 
     return () => {
