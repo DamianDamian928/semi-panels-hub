@@ -3,6 +3,7 @@ import { Dashboard } from './components/Dashboard'
 import { DesignTemplatePanel } from './components/DesignTemplatePanel'
 import { ReviewEditor } from './components/ReviewEditor'
 import { SettingsPanel } from './components/SettingsPanel'
+import { SettingsSourcesPanel } from './components/SettingsSourcesPanel'
 import { TechnicalStatusPanel } from './components/TechnicalStatusPanel'
 import { useTechnicalStatus } from './hooks/useTechnicalStatus'
 import { useWorkflowData } from './hooks/useWorkflowData'
@@ -29,8 +30,24 @@ export default function App() {
   if (appView === 'settings') {
     return (
       <SettingsPanel
+        onOpenSources={() => setAppView('settings-sources')}
         onOpenDiagnostics={() => setAppView('settings-diagnostics')}
         onOpenDesignTemplate={() => setAppView('settings-design-template')}
+        onBackToDashboard={() => setAppView('dashboard')}
+      />
+    )
+  }
+
+  if (appView === 'settings-sources') {
+    return (
+      <SettingsSourcesPanel
+        sourceDefinitions={workflowData.sourceDefinitions}
+        createSource={workflowData.createSource}
+        deleteSource={workflowData.deleteSource}
+        registerSourceLocalFile={workflowData.registerSourceLocalFile}
+        checkSourcesAccess={workflowData.checkSourcesAccess}
+        checkSourceAccess={workflowData.checkSourceAccess}
+        onBackToSettings={() => setAppView('settings')}
         onBackToDashboard={() => setAppView('dashboard')}
       />
     )

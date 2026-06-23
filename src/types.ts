@@ -1,7 +1,13 @@
 export type ReviewStatus = 'Draft' | 'In progress' | 'Completed'
 export type MainStage = 'BOM' | 'Documentation' | 'Costing'
 export type ProcessStep = 'Sources' | 'Comparison' | 'Validation' | 'Decisions' | 'Output' | 'AI Assistant'
-export type AppView = 'dashboard' | 'settings' | 'settings-diagnostics' | 'settings-design-template' | 'review-editor'
+export type AppView =
+  | 'dashboard'
+  | 'settings'
+  | 'settings-sources'
+  | 'settings-diagnostics'
+  | 'settings-design-template'
+  | 'review-editor'
 export type ApiConnectionState = 'loading' | 'ready' | 'offline' | 'error'
 
 export type SidebarIconName =
@@ -26,6 +32,11 @@ export type DashboardRow = {
   owner: string
   lastUpdated: string
   forecastStatus?: string
+  poDocuments?: {
+    poNumber: string
+    name: string
+    path: string
+  }[]
   dashboardColumns?: string[]
   dashboardCells?: Record<string, string>
 }

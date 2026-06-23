@@ -134,6 +134,7 @@ export function SourcesStep({
   const isSelectingSource = selectedSource ? sourceSelectionPendingId === selectedSource.id : false
   const isCheckingSelectedSource = selectedSource ? sourceAccessPendingId === selectedSource.id : false
   const selectedAccessCheck = selectedSource?.accessCheck
+  const isSelectedSourceError = selectedSource?.status === 'Error' || selectedAccessCheck?.status === 'Error'
 
   const submitNewSource = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -156,7 +157,7 @@ export function SourcesStep({
   }
 
   const openSelectedSourceLocation = async () => {
-    if (!selectedSourceFile) return
+    if (!selectedSource || !selectedSourceFile) return
 
     setSourceOpenLocationError(null)
 
@@ -173,14 +174,10 @@ export function SourcesStep({
         const payload = await response.json().catch(() => null) as { error?: string } | null
         throw new Error(payload?.error ?? 'Could not open this local location.')
       }
-    } catch (error) {
-      setSourceOpenLocationError(
-        error instanceof Error
-          ? error.message === 'Failed to fetch'
-            ? 'Local file helper is offline. Start npm run helper or npm run start:local, then try again.'
-            : error.message
-          : 'Local file helper is offline. Start npm run helper or npm run start:local, then try again.',
-      )
+    } catch {
+      if (canChooseLocalPath && !sourceSelectionPendingId && !sourceAccessPendingId && !sourceMutationPending) {
+        onChooseSourceFile(selectedSource.id)
+      }
     }
   }
 
@@ -430,11 +427,15 @@ export function SourcesStep({
                   </div>
                   <div className="source-property-row">
                     <dt>Check result</dt>
-                    <dd>{selectedAccessCheck?.message ?? 'Access has not been checked yet.'}</dd>
+                    <dd className={isSelectedSourceError ? 'source-error-text' : undefined}>
+                      {selectedAccessCheck?.message ?? 'Access has not been checked yet.'}
+                    </dd>
                   </div>
                   <div className="source-property-row">
                     <dt>Readable</dt>
-                    <dd>{selectedAccessCheck ? (selectedAccessCheck.readable ? 'Yes' : 'No') : 'Unknown'}</dd>
+                    <dd className={isSelectedSourceError ? 'source-error-text' : undefined}>
+                      {selectedAccessCheck ? (selectedAccessCheck.readable ? 'Yes' : 'No') : 'Unknown'}
+                    </dd>
                   </div>
                   {selectedFolderSummary ? (
                     <div className="source-property-row">

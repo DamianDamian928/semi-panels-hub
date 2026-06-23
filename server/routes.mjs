@@ -10,6 +10,7 @@ import { workflowRepository } from './workflowRepository.mjs'
 
 const serverDirectory = dirname(fileURLToPath(import.meta.url))
 const packageInfo = JSON.parse(readFileSync(join(serverDirectory, '..', 'package.json'), 'utf8'))
+const intelPoDocumentsDirectory = 'C:\\Users\\zajdam\\OneDrive - Watlow\\Eurotherm Poland - Production Plan - Production Plan\\02_Semi Panels\\01_Mass Production\\01_Intel PO'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -174,7 +175,6 @@ const previewableFileExtensions = new Set(['xlsx', 'xlsm'])
 const normalizeDashboardField = (value) => String(value ?? '').trim().toLowerCase()
 const normalizeColumnField = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
 const partNumberPattern = /^\d+-\d+$/
-const forecastStatusPriority = ['ORDERED', 'FORECAST', 'PLACED']
 
 const getDashboardCellByName = (review, fieldName) => {
   const normalizedFieldName = normalizeDashboardField(fieldName)
@@ -245,8 +245,18 @@ const requireConfiguredContractSource = (contractId, targetId = null) => {
 const normalizeForecastLookupValue = (value) => String(value ?? '').trim().toLowerCase()
 
 const normalizeForecastStatus = (value) => String(value ?? '').trim().toUpperCase()
+const extractPoNumbers = (value) => [
+  ...new Set([...String(value ?? '').matchAll(/(?:^|\D)(\d{10})(?!\d)/g)].map((match) => match[1])),
+]
 
-const forecastModelMatchesIntelDescription = (forecastModel, intelDescription) => {
+const forecastColumns = {
+  intelPo: 'INTEL PO #',
+  intelRtd: 'INTEL RTD',
+  oracleRtd: 'ORACLE RTD',
+  watlowRtd: 'WATLOW RTD',
+}
+
+const forecastModelMatchesReviewScope = (forecastModel, intelDescription) => {
   const model = normalizeForecastLookupValue(forecastModel)
   const target = normalizeForecastLookupValue(intelDescription)
 
@@ -255,8 +265,111 @@ const forecastModelMatchesIntelDescription = (forecastModel, intelDescription) =
   return model === target || model.startsWith(`${target}-`)
 }
 
-const chooseForecastStatus = (statuses) =>
-  forecastStatusPriority.find((status) => statuses.has(status)) ?? ''
+const forecastModelMatchesReviewExactly = (forecastModel, intelDescription) =>
+  normalizeForecastLookupValue(forecastModel) === normalizeForecastLookupValue(intelDescription)
+
+const parseForecastPeriod = (value) => {
+  const match = String(value ?? '').trim().match(/^(\d{4})[./-](\d{1,2})$/)
+  if (!match) return null
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null
+
+  return year * 100 + month
+}
+
+const parseForecastNumber = (value) => {
+  const numericValue = Number(String(value ?? '').trim().replace(',', '.'))
+  return Number.isFinite(numericValue) ? numericValue : null
+}
+
+const getForecastRecordRank = (record) => {
+  const forecastPeriod = parseForecastPeriod(record.forecastDate)
+  if (forecastPeriod !== null) return forecastPeriod * 100000 + record.sourceIndex
+
+  const noScheduleDate = parseForecastNumber(record.noScheduleDate)
+  if (noScheduleDate !== null) return noScheduleDate * 1000 + record.sourceIndex
+
+  const intelRtdDate = parseForecastNumber(record.intelRtdRaw)
+  if (intelRtdDate !== null) return intelRtdDate * 1000 + record.sourceIndex
+
+  return record.sourceIndex
+}
+
+const chooseCurrentForecastRecord = (records) =>
+  [...records].sort((left, right) => getForecastRecordRank(right) - getForecastRecordRank(left))[0] ?? null
+
+const findForecastRecordForReview = (review, forecastRecords) => {
+  const intelDescription = getReviewIntelDescription(review)
+  const matvar = getReviewItem(review)
+  const normalizedMatvar = normalizeForecastLookupValue(matvar)
+
+  const matvarMatches = forecastRecords.filter((record) =>
+    normalizedMatvar &&
+    normalizeForecastLookupValue(record.mvar) === normalizedMatvar &&
+    forecastModelMatchesReviewScope(record.model, intelDescription),
+  )
+  if (matvarMatches.length) return chooseCurrentForecastRecord(matvarMatches)
+
+  const exactModelMatches = forecastRecords.filter((record) =>
+    forecastModelMatchesReviewExactly(record.model, intelDescription),
+  )
+  return chooseCurrentForecastRecord(exactModelMatches)
+}
+
+const scanIntelPoDocuments = async (folderPath = intelPoDocumentsDirectory) => {
+  const documentsByPoNumber = new Map()
+
+  const addDocument = (poNumber, document) => {
+    const documents = documentsByPoNumber.get(poNumber) ?? []
+    documents.push(document)
+    documentsByPoNumber.set(poNumber, documents)
+  }
+
+  const scanFolder = async (currentFolderPath) => {
+    let entries
+
+    try {
+      entries = await readdir(currentFolderPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    await Promise.all(entries.map(async (entry) => {
+      const entryPath = join(currentFolderPath, entry.name)
+
+      if (entry.isDirectory()) {
+        await scanFolder(entryPath)
+        return
+      }
+
+      if (!entry.isFile() || extname(entry.name).toLowerCase() !== '.pdf') return
+
+      const poNumbers = extractPoNumbers(entry.name)
+      if (!poNumbers.length) return
+
+      for (const poNumber of poNumbers) {
+        addDocument(poNumber, {
+          poNumber,
+          name: entry.name,
+          path: entryPath,
+        })
+      }
+    }))
+  }
+
+  await scanFolder(folderPath)
+
+  for (const documents of documentsByPoNumber.values()) {
+    documents.sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' }))
+  }
+
+  return documentsByPoNumber
+}
+
+const findPoDocumentsForValue = (poValue, documentsByPoNumber) =>
+  extractPoNumbers(poValue).flatMap((poNumber) => documentsByPoNumber.get(poNumber) ?? [])
 
 const createLiveSourceReadStatus = ({ source, sourcePath, rows }) => ({
   status: 'Live',
@@ -275,13 +388,28 @@ const readDashboardRowsFromSource = async () => {
   const { contract, source, sourcePath } = requireConfiguredContractSource('dashboard:mass-production', 'dashboard')
   const worksheet = await readExcelWorksheet(sourcePath, { sheetName: contract.sheetName })
   const columnIndexByName = Object.fromEntries(worksheet.columns.map((column, index) => [column, index]))
-  const dashboardColumns = [
+  const sourceDashboardColumns = [
     contract.fields.item,
     contract.fields.scope,
+    contract.fields.implementationStep,
+    contract.fields.lastUpdate,
+    contract.fields.implementationStepValid,
     contract.fields.oracleItemDescription,
     contract.fields.intelDescription,
   ]
-  const missingColumns = dashboardColumns.filter((column) => !(column in columnIndexByName))
+  const dashboardColumns = [
+    contract.fields.item,
+    contract.fields.scope,
+    contract.fields.intelPo,
+    contract.fields.intelRtd,
+    contract.fields.watlowRtd,
+    contract.fields.implementationStep,
+    contract.fields.lastUpdate,
+    contract.fields.implementationStepValid,
+    contract.fields.oracleItemDescription,
+    contract.fields.intelDescription,
+  ]
+  const missingColumns = sourceDashboardColumns.filter((column) => !(column in columnIndexByName))
 
   if (missingColumns.length) {
     throw new SourcePolicyError(
@@ -293,7 +421,14 @@ const readDashboardRowsFromSource = async () => {
   const reviews = worksheet.rows
     .map((row, index) => {
       const dashboardCells = Object.fromEntries(
-        dashboardColumns.map((column) => [column, String(row[columnIndexByName[column]] ?? '').trim()]),
+        dashboardColumns.map((column) => {
+          const rawValue = String(
+            column in columnIndexByName ? row[columnIndexByName[column]] : '',
+          ).trim()
+          const value = column === contract.fields.lastUpdate ? formatSourceDate(rawValue) : rawValue
+
+          return [column, value]
+        }),
       )
       const intelModel = dashboardCells[contract.fields.item] || dashboardCells[contract.fields.intelDescription] || `dashboard-row-${index + 1}`
 
@@ -309,9 +444,26 @@ const readDashboardRowsFromSource = async () => {
     })
     .filter((row) => dashboardColumns.some((column) => row.dashboardCells[column]))
 
+  const forecastDataByReviewId = await readForecastDataByReview(reviews)
+  const poDocumentsByPoNumber = await scanIntelPoDocuments()
+  const reviewsWithForecastData = reviews.map((review) => {
+    const forecastData = forecastDataByReviewId.get(review.id)
+    const dashboardCells = {
+      ...review.dashboardCells,
+      ...forecastData?.dashboardCells,
+    }
+
+    return {
+      ...review,
+      forecastStatus: forecastData?.forecastStatus || undefined,
+      dashboardCells,
+      poDocuments: findPoDocumentsForValue(dashboardCells[contract.fields.intelPo], poDocumentsByPoNumber),
+    }
+  })
+
   return {
-    reviews,
-    sourceReadStatus: createLiveSourceReadStatus({ source, sourcePath, rows: reviews.length }),
+    reviews: reviewsWithForecastData,
+    sourceReadStatus: createLiveSourceReadStatus({ source, sourcePath, rows: reviewsWithForecastData.length }),
   }
 }
 
@@ -320,55 +472,102 @@ const getLiveReview = async (reviewId) => {
   return reviews.find((review) => review.id === reviewId) ?? null
 }
 
-const readForecastStatusByIntelDescription = async (reviews) => {
-  const { sourcePath } = requireConfiguredContractSource('dashboard:mass-production', 'dashboard')
+const formatForecastRtdValue = (value) => {
+  const text = String(value ?? '').trim()
+  const numericValue = Number(text.replace(',', '.'))
+  if (!text || numericValue <= 0) return ''
 
-  const worksheet = await readExcelWorksheet(sourcePath, { sheetName: 'Forecast' })
-  const modelColumn = getColumnByAliases(worksheet.columns, ['INTEL MODEL NUMBER ITEM'])
-  const statusColumn = getColumnByAliases(worksheet.columns, ['Status'])
-  const intelPoColumn = getColumnByAliases(worksheet.columns, ['INTEL PO #'])
-  if (!modelColumn || !statusColumn) return new Map()
+  return formatSourceDate(text)
+}
 
-  const modelColumnIndex = worksheet.columns.findIndex((column) => column === modelColumn)
-  const statusColumnIndex = worksheet.columns.findIndex((column) => column === statusColumn)
-  const intelPoColumnIndex = intelPoColumn
-    ? worksheet.columns.findIndex((column) => column === intelPoColumn)
-    : -1
-  const result = new Map()
+const readForecastDataByReview = async (reviews) => {
+  try {
+    const { sourcePath } = requireConfiguredContractSource('dashboard:mass-production', 'dashboard')
+    const worksheet = await readExcelWorksheet(sourcePath, { sheetName: 'Forecast' })
+    const modelColumn = getColumnByAliases(worksheet.columns, ['INTEL MODEL NUMBER ITEM'])
+    const statusColumn = getColumnByAliases(worksheet.columns, ['Status'])
+    const mvarColumn = getColumnByAliases(worksheet.columns, ['MVAR'])
+    const intelPoColumn = getColumnByAliases(worksheet.columns, [forecastColumns.intelPo])
+    const intelRtdColumn = getColumnByAliases(worksheet.columns, [forecastColumns.intelRtd])
+    const oracleRtdColumn = getColumnByAliases(worksheet.columns, [forecastColumns.oracleRtd])
+    const watlowRtdColumn = getColumnByAliases(worksheet.columns, [forecastColumns.watlowRtd])
+    const forecastDateColumn = getColumnByAliases(worksheet.columns, ['Forecast date'])
+    const noScheduleDateColumn = getColumnByAliases(worksheet.columns, ['no schedule date'])
 
-  reviews.forEach((review) => {
-    const intelDescription = getReviewIntelDescription(review)
-    const statuses = new Set()
+    if (!modelColumn || !statusColumn) return new Map()
 
-    worksheet.rows.forEach((row) => {
-      if (!forecastModelMatchesIntelDescription(row[modelColumnIndex], intelDescription)) return
+    const columnIndex = (column) => column ? worksheet.columns.findIndex((sourceColumn) => sourceColumn === column) : -1
+    const modelColumnIndex = columnIndex(modelColumn)
+    const statusColumnIndex = columnIndex(statusColumn)
+    const mvarColumnIndex = columnIndex(mvarColumn)
+    const intelPoColumnIndex = columnIndex(intelPoColumn)
+    const intelRtdColumnIndex = columnIndex(intelRtdColumn)
+    const oracleRtdColumnIndex = columnIndex(oracleRtdColumn)
+    const watlowRtdColumnIndex = columnIndex(watlowRtdColumn)
+    const forecastDateColumnIndex = columnIndex(forecastDateColumn)
+    const noScheduleDateColumnIndex = columnIndex(noScheduleDateColumn)
 
-      const status = normalizeForecastStatus(row[statusColumnIndex])
-      if (forecastStatusPriority.includes(status)) statuses.add(status)
+    const getCell = (row, index) => index >= 0 ? String(row[index] ?? '').trim() : ''
+    const forecastRecords = worksheet.rows.map((row, sourceIndex) => ({
+      sourceIndex,
+      model: getCell(row, modelColumnIndex),
+      status: normalizeForecastStatus(getCell(row, statusColumnIndex)),
+      mvar: getCell(row, mvarColumnIndex),
+      intelPo: getCell(row, intelPoColumnIndex),
+      intelRtdRaw: getCell(row, intelRtdColumnIndex),
+      oracleRtdRaw: getCell(row, oracleRtdColumnIndex),
+      watlowRtdRaw: getCell(row, watlowRtdColumnIndex),
+      forecastDate: getCell(row, forecastDateColumnIndex),
+      noScheduleDate: getCell(row, noScheduleDateColumnIndex),
+    }))
+      .filter((record) => record.model && record.status)
 
-      const intelPoStatus = intelPoColumnIndex >= 0 ? normalizeForecastStatus(row[intelPoColumnIndex]) : ''
-      if (intelPoStatus === 'FORECAST') statuses.add('FORECAST')
-    })
+    return new Map(reviews.flatMap((review) => {
+      const forecastRecord = findForecastRecordForReview(review, forecastRecords)
+      if (!forecastRecord) return []
 
-    const forecastStatus = chooseForecastStatus(statuses)
-    if (forecastStatus) result.set(review.id, forecastStatus)
-  })
-
-  return result
+      return [[review.id, {
+        forecastStatus: forecastRecord.status,
+        dashboardCells: {
+          [forecastColumns.intelPo]: forecastRecord.intelPo,
+          [forecastColumns.intelRtd]: formatForecastRtdValue(forecastRecord.intelRtdRaw),
+          [forecastColumns.watlowRtd]: formatForecastRtdValue(forecastRecord.watlowRtdRaw),
+        },
+      }]]
+    }))
+  } catch {
+    return new Map()
+  }
 }
 
 const buildBootstrapPayload = async () => {
   const payload = workflowRepository.getBootstrapPayload()
-  const { reviews, sourceReadStatus } = await readDashboardRowsFromSource()
+  let reviews
+  let sourceReadStatus
 
-  const forecastStatusByReviewId = await readForecastStatusByIntelDescription(reviews)
+  try {
+    const dashboardRead = await readDashboardRowsFromSource()
+    reviews = dashboardRead.reviews
+    sourceReadStatus = dashboardRead.sourceReadStatus
+  } catch (error) {
+    return {
+      ...payload,
+      reviews: [],
+      sourceReadStatus: {
+        ...payload.sourceReadStatus,
+        status: 'Source unavailable',
+        sourceReadAt: null,
+        sourceReadAtLabel: null,
+        message: error instanceof Error
+          ? error.message
+          : 'Dashboard source could not be read.',
+      },
+    }
+  }
 
   return {
     ...payload,
-    reviews: reviews.map((review) => ({
-      ...review,
-      forecastStatus: forecastStatusByReviewId.get(review.id) ?? undefined,
-    })),
+    reviews,
     sourceReadStatus,
   }
 }
@@ -1624,12 +1823,7 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
   if (routeKey === 'GET /api/reviews') {
     const { reviews } = await readDashboardRowsFromSource()
-    const forecastStatusByReviewId = await readForecastStatusByIntelDescription(reviews)
-
-    sendJson(response, 200, reviews.map((review) => ({
-      ...review,
-      forecastStatus: forecastStatusByReviewId.get(review.id) ?? undefined,
-    })))
+    sendJson(response, 200, reviews)
     return
   }
 

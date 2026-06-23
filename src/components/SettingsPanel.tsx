@@ -1,10 +1,17 @@
 type SettingsPanelProps = {
+  onOpenSources: () => void
   onOpenDiagnostics: () => void
   onOpenDesignTemplate: () => void
   onBackToDashboard: () => void
 }
 
 const settingsOptions = [
+  {
+    id: 'sources',
+    title: 'Sources',
+    description: 'Global source registry, local file and folder paths, and access checks.',
+    actionLabel: 'Open sources',
+  },
   {
     id: 'design-template',
     title: 'Design Template',
@@ -20,11 +27,17 @@ const settingsOptions = [
 ]
 
 export function SettingsPanel({
+  onOpenSources,
   onOpenDiagnostics,
   onOpenDesignTemplate,
   onBackToDashboard,
 }: SettingsPanelProps) {
   const handleOpenOption = (optionId: string) => {
+    if (optionId === 'sources') {
+      onOpenSources()
+      return
+    }
+
     if (optionId === 'design-template') {
       onOpenDesignTemplate()
       return

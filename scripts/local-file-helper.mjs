@@ -240,7 +240,7 @@ const getLocalFolderMetadata = async (folderPath) => {
   }
 }
 
-const openLocalLocation = (filePath) =>
+const openLocalLocation = (filePath, openMode = 'location') =>
   new Promise((resolve, reject) => {
     if (process.platform !== 'win32') {
       reject(new Error('Opening local locations currently supports Windows only.'))
@@ -248,9 +248,13 @@ const openLocalLocation = (filePath) =>
     }
 
     const escapedPath = filePath.replace(/'/g, "''")
+    const shouldOpenFile = openMode === 'file'
     const script = `
 $path = '${escapedPath}'
-if (Test-Path -LiteralPath $path -PathType Leaf) {
+$openFile = ${shouldOpenFile ? '$true' : '$false'}
+if ($openFile -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+  Start-Process -FilePath $path
+} elseif (Test-Path -LiteralPath $path -PathType Leaf) {
   Start-Process explorer.exe -ArgumentList ('/select,"' + $path + '"')
 } elseif (Test-Path -LiteralPath $path -PathType Container) {
   Start-Process explorer.exe -ArgumentList ('"' + $path + '"')
@@ -374,7 +378,7 @@ const server = createServer(async (request, response) => {
     }
 
     try {
-      await openLocalLocation(body.path)
+      await openLocalLocation(body.path, body.openMode)
       sendJson(response, 200, { ok: true })
     } catch (error) {
       sendJson(response, 500, {

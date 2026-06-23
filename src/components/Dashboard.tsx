@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiConnectionState, DashboardRow, SourceReadStatus } from '../types'
+import { localFileOpenLocationEndpoint } from '../localFileHelper'
 import { ApiStatusBanner } from './ApiStatusBanner'
 import { statusClassName } from './sharedReviewUi'
 
 const sourceRefreshIntervalMs = 5 * 60 * 1000
 type SortDirection = 'asc' | 'desc'
 type SortKind = 'value' | 'forecastStatus'
-type ForecastStatusFilter = 'ORDERED' | 'FORECAST' | 'PLACED' | 'No status'
+type ForecastStatusFilter = 'CANCELED' | 'FORECAST' | 'ORDERED' | 'PLACED' | 'PO_ISSUE' | 'SHIPPED' | 'No status'
+type DashboardSortState = { key: string; direction: SortDirection; kind: SortKind }
+type DashboardPreferences = {
+  sortState: DashboardSortState | null
+  forecastStatusFilters: ForecastStatusFilter[]
+  scopeFilters: string[]
+}
 type SortMenuPosition = {
   top: number
   left: number
@@ -18,14 +25,27 @@ type DashboardColumn = {
   getValue: (row: DashboardRow) => string
 }
 
-const preferredMappedDashboardColumns = ['INTEL Description', 'ORACLE Item Description', 'Item', 'Scope']
-const forecastStatusOrder = ['ORDERED', 'FORECAST', 'PLACED'] as const
+const preferredMappedDashboardColumns = [
+  'INTEL Description',
+  'ORACLE Item Description',
+  'Item',
+  'Scope',
+  'INTEL PO #',
+  'INTEL RTD',
+  'WATLOW RTD',
+  'Implementation step',
+  'Last update',
+  'Implementation step valid (po okresie 3 miesięcy dokumentacja wymaga aktualiazacji)',
+]
+const forecastStatusOrder = ['CANCELED', 'FORECAST', 'ORDERED', 'PLACED', 'PO_ISSUE', 'SHIPPED'] as const
 const forecastStatusFilters: ForecastStatusFilter[] = [...forecastStatusOrder, 'No status']
+const dashboardPreferencesStorageKey = 'semi-panels-hub.dashboard.preferences.v2'
 
 const normalizeDashboardColumn = (column: string) => column.trim().replace(/\s+/g, ' ').toLowerCase()
 const normalizeForecastStatus = (status?: string) => String(status ?? '').trim().toUpperCase()
 const isIntelDescriptionColumn = (columnKey: string) => normalizeDashboardColumn(columnKey) === 'intel description'
 const isScopeColumn = (columnKey: string) => normalizeDashboardColumn(columnKey) === 'scope'
+const isIntelPoColumn = (columnKey: string) => normalizeDashboardColumn(columnKey) === 'intel po #'
 const getForecastStatusRank = (status?: string) => {
   const rank = forecastStatusOrder.indexOf(normalizeForecastStatus(status) as typeof forecastStatusOrder[number])
   return rank === -1 ? Number.MAX_SAFE_INTEGER : rank
@@ -35,6 +55,69 @@ const getForecastStatusFilterSummary = (filters: ForecastStatusFilter[]) => {
   if (filters.length === 0) return ''
   if (filters.length === 1) return '1 filter'
   return `${filters.length} filters`
+}
+
+const getDefaultDashboardPreferences = (): DashboardPreferences => ({
+  sortState: null,
+  forecastStatusFilters: [],
+  scopeFilters: [],
+})
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isSortDirection = (value: unknown): value is SortDirection =>
+  value === 'asc' || value === 'desc'
+
+const isSortKind = (value: unknown): value is SortKind =>
+  value === 'value' || value === 'forecastStatus'
+
+const isForecastStatusFilter = (value: unknown): value is ForecastStatusFilter =>
+  typeof value === 'string' && forecastStatusFilters.includes(value as ForecastStatusFilter)
+
+const isDashboardSortState = (value: unknown): value is DashboardSortState =>
+  isRecord(value) &&
+  typeof value.key === 'string' &&
+  value.key.length > 0 &&
+  isSortDirection(value.direction) &&
+  isSortKind(value.kind)
+
+const getStoredDashboardPreferences = (): DashboardPreferences => {
+  const fallbackPreferences = getDefaultDashboardPreferences()
+  if (typeof window === 'undefined') return fallbackPreferences
+
+  try {
+    const rawPreferences = window.localStorage.getItem(dashboardPreferencesStorageKey)
+    if (!rawPreferences) return fallbackPreferences
+
+    const parsedPreferences: unknown = JSON.parse(rawPreferences)
+    if (!isRecord(parsedPreferences)) return fallbackPreferences
+
+    const forecastStatusFiltersValue = parsedPreferences.forecastStatusFilters
+    const scopeFiltersValue = parsedPreferences.scopeFilters
+
+    return {
+      sortState: isDashboardSortState(parsedPreferences.sortState) ? parsedPreferences.sortState : null,
+      forecastStatusFilters: Array.isArray(forecastStatusFiltersValue)
+        ? [...new Set(forecastStatusFiltersValue.filter(isForecastStatusFilter))]
+        : [],
+      scopeFilters: Array.isArray(scopeFiltersValue)
+        ? [...new Set(scopeFiltersValue.filter((scope): scope is string => typeof scope === 'string' && scope.length > 0))]
+        : [],
+    }
+  } catch {
+    return fallbackPreferences
+  }
+}
+
+const saveDashboardPreferences = (preferences: DashboardPreferences) => {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(dashboardPreferencesStorageKey, JSON.stringify(preferences))
+  } catch {
+    // Browser storage can be unavailable in private mode or locked-down environments.
+  }
 }
 
 const getScopeFilterSummary = (filters: string[]) => {
@@ -118,12 +201,24 @@ export function Dashboard({
 }: DashboardProps) {
   const mappedColumns = dashboardRows.find((row) => row.dashboardColumns?.length)?.dashboardColumns ?? []
   const isMappedDashboard = mappedColumns.length > 0
-  const [sortState, setSortState] = useState<{ key: string; direction: SortDirection; kind: SortKind } | null>(null)
-  const [forecastStatusFiltersState, setForecastStatusFiltersState] = useState<ForecastStatusFilter[]>([])
-  const [scopeFiltersState, setScopeFiltersState] = useState<string[]>([])
+  const [initialDashboardPreferences] = useState(getStoredDashboardPreferences)
+  const [sortState, setSortState] = useState<DashboardSortState | null>(initialDashboardPreferences.sortState)
+  const [forecastStatusFiltersState, setForecastStatusFiltersState] = useState<ForecastStatusFilter[]>(
+    initialDashboardPreferences.forecastStatusFilters,
+  )
+  const [scopeFiltersState, setScopeFiltersState] = useState<string[]>(initialDashboardPreferences.scopeFilters)
   const [openSortMenuKey, setOpenSortMenuKey] = useState<string | null>(null)
   const [sortMenuPosition, setSortMenuPosition] = useState<SortMenuPosition | null>(null)
   const refreshApiRef = useRef(onRefreshApi)
+  const dashboardTableWrapRef = useRef<HTMLDivElement | null>(null)
+  const dashboardTableRef = useRef<HTMLTableElement | null>(null)
+  const fixedScrollbarRef = useRef<HTMLDivElement | null>(null)
+  const isSyncingScrollRef = useRef(false)
+  const [dashboardScrollMetrics, setDashboardScrollMetrics] = useState({
+    scrollWidth: 0,
+    clientWidth: 0,
+    left: 0,
+  })
   const scopeColumnKey = mappedColumns.find((column) => isScopeColumn(column)) ?? null
   const dashboardColumns = useMemo<DashboardColumn[]>(
     () => isMappedDashboard
@@ -191,9 +286,10 @@ export function Dashboard({
       .sort((left, right) => {
         if (sortState.kind === 'forecastStatus') {
           const statusResult = getForecastStatusRank(left.row.forecastStatus) - getForecastStatusRank(right.row.forecastStatus)
+          const directedStatusResult = sortState.direction === 'asc' ? statusResult : -statusResult
           const descriptionResult = compareDashboardValues(activeColumn.getValue(left.row), activeColumn.getValue(right.row))
 
-          return statusResult || descriptionResult || left.index - right.index
+          return directedStatusResult || descriptionResult || left.index - right.index
         }
 
         const valueResult = compareDashboardValues(activeColumn.getValue(left.row), activeColumn.getValue(right.row))
@@ -210,8 +306,8 @@ export function Dashboard({
     setSortMenuPosition(null)
   }
 
-  const setForecastStatusSort = (columnKey: string) => {
-    setSortState({ key: columnKey, direction: 'asc', kind: 'forecastStatus' })
+  const setForecastStatusSort = (columnKey: string, direction: SortDirection) => {
+    setSortState({ key: columnKey, direction, kind: 'forecastStatus' })
     setOpenSortMenuKey(null)
     setSortMenuPosition(null)
   }
@@ -228,6 +324,34 @@ export function Dashboard({
 
   const clearScopeFilters = () => {
     setScopeFiltersState([])
+  }
+
+  const openPoDocument = async (path: string) => {
+    try {
+      const response = await fetch(localFileOpenLocationEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path, openMode: 'file' }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Could not open PO document.')
+      }
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  const syncDashboardScroll = (source: HTMLDivElement | null, target: HTMLDivElement | null) => {
+    if (!source || !target || isSyncingScrollRef.current) return
+
+    isSyncingScrollRef.current = true
+    target.scrollLeft = source.scrollLeft
+    window.requestAnimationFrame(() => {
+      isSyncingScrollRef.current = false
+    })
   }
 
   const toggleForecastStatusFilter = (status: ForecastStatusFilter) => {
@@ -261,6 +385,29 @@ export function Dashboard({
   }
 
   const renderMappedDashboardCell = (row: DashboardRow, column: DashboardColumn) => {
+    if (isIntelPoColumn(column.key)) {
+      return (
+        <span className="dashboard-po-cell">
+          <span>{column.getValue(row)}</span>
+          {row.poDocuments?.map((document) => (
+            <button
+              key={document.path}
+              type="button"
+              className="dashboard-po-document-button"
+              title={`Open ${document.name}`}
+              aria-label={`Open PO ${document.poNumber}`}
+              onClick={(event) => {
+                event.stopPropagation()
+                void openPoDocument(document.path)
+              }}
+            >
+              <span className="dashboard-po-document-icon" aria-hidden="true" />
+            </button>
+          ))}
+        </span>
+      )
+    }
+
     if (!isIntelDescriptionColumn(column.key)) return column.getValue(row)
 
     return (
@@ -295,24 +442,30 @@ export function Dashboard({
             }
           }}
         >
-          <span className="dashboard-column-label">{column.label}</span>
-          {isSortActive ? (
-            <span className="dashboard-sort-state">
-              {sortState.kind === 'forecastStatus'
-                ? 'STATUS'
-                : sortState.direction === 'asc' ? 'A-Z' : 'Z-A'}
-            </span>
-          ) : null}
-          {isIntelDescription && forecastStatusFilterSummary ? (
-            <span className="dashboard-sort-state dashboard-filter-state">
-              {forecastStatusFilterSummary}
-            </span>
-          ) : null}
-          {isScope && scopeFilterSummary ? (
-            <span className="dashboard-sort-state dashboard-filter-state" title={scopeFiltersState.join(', ')}>
-              {scopeFilterSummary}
-            </span>
-          ) : null}
+          <span className="dashboard-column-main">
+            <span className="dashboard-column-label">{column.label}</span>
+            {isSortActive || (isIntelDescription && forecastStatusFilterSummary) || (isScope && scopeFilterSummary) ? (
+              <span className="dashboard-column-badges">
+                {isSortActive ? (
+                  <span className="dashboard-sort-state">
+                    {sortState.kind === 'forecastStatus'
+                      ? 'STATUS'
+                      : sortState.direction === 'asc' ? 'A-Z' : 'Z-A'}
+                  </span>
+                ) : null}
+                {isIntelDescription && forecastStatusFilterSummary ? (
+                  <span className="dashboard-sort-state dashboard-filter-state">
+                    {forecastStatusFilterSummary}
+                  </span>
+                ) : null}
+                {isScope && scopeFilterSummary ? (
+                  <span className="dashboard-sort-state dashboard-filter-state" title={scopeFiltersState.join(', ')}>
+                    {scopeFilterSummary}
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
+          </span>
           <button
             type="button"
             className={`dashboard-column-menu-button ${isMenuOpen ? 'dashboard-column-menu-button-open' : ''}`}
@@ -360,9 +513,13 @@ export function Dashboard({
         </button>
         {isIntelDescription ? (
           <>
-            <button type="button" role="menuitem" onClick={() => setForecastStatusSort(column.key)}>
+            <button type="button" role="menuitem" onClick={() => setForecastStatusSort(column.key, 'asc')}>
               <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-status" aria-hidden="true" />
-              Sort by status
+              Sort status A to Z
+            </button>
+            <button type="button" role="menuitem" onClick={() => setForecastStatusSort(column.key, 'desc')}>
+              <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-status" aria-hidden="true" />
+              Sort status Z to A
             </button>
             <div className="dashboard-sort-menu-section" role="group" aria-label="Filter by forecast status">
               <span className="dashboard-sort-menu-label">Filter status</span>
@@ -459,8 +616,50 @@ export function Dashboard({
   }, [apiConnectionState, onRefreshApi])
 
   useEffect(() => {
+    saveDashboardPreferences({
+      sortState,
+      forecastStatusFilters: forecastStatusFiltersState,
+      scopeFilters: scopeFiltersState,
+    })
+  }, [forecastStatusFiltersState, scopeFiltersState, sortState])
+
+  useEffect(() => {
+    if (!scopeColumnKey) return
+
     setScopeFiltersState((current) => current.filter((scope) => scopeFilterOptions.includes(scope)))
-  }, [scopeFilterOptions])
+  }, [scopeColumnKey, scopeFilterOptions])
+
+  useEffect(() => {
+    const tableWrap = dashboardTableWrapRef.current
+    const table = dashboardTableRef.current
+    if (!tableWrap || !table) return
+
+    const updateScrollMetrics = () => {
+      const tableWrapRect = tableWrap.getBoundingClientRect()
+
+      setDashboardScrollMetrics({
+        scrollWidth: table.scrollWidth,
+        clientWidth: tableWrap.clientWidth,
+        left: tableWrapRect.left,
+      })
+
+      if (fixedScrollbarRef.current) {
+        fixedScrollbarRef.current.scrollLeft = tableWrap.scrollLeft
+      }
+    }
+
+    updateScrollMetrics()
+    window.addEventListener('resize', updateScrollMetrics)
+
+    const resizeObserver = new ResizeObserver(updateScrollMetrics)
+    resizeObserver.observe(tableWrap)
+    resizeObserver.observe(table)
+
+    return () => {
+      window.removeEventListener('resize', updateScrollMetrics)
+      resizeObserver.disconnect()
+    }
+  }, [dashboardColumns.length, sortedDashboardRows.length])
 
   useEffect(() => {
     if (!openSortMenuKey) return
@@ -484,7 +683,7 @@ export function Dashboard({
   }, [openSortMenuKey])
 
   return (
-    <div className="app-shell">
+    <div className="app-shell dashboard-shell">
       <header className="page-header page-header-row">
         <div>
           <p className="eyebrow">Semi Panels Hub</p>
@@ -514,8 +713,12 @@ export function Dashboard({
 
       <main className="page-content">
         <section className="card" aria-label="Review list">
-          <div className="table-wrap">
-            <table>
+          <div
+            ref={dashboardTableWrapRef}
+            className="table-wrap dashboard-table-wrap"
+            onScroll={() => syncDashboardScroll(dashboardTableWrapRef.current, fixedScrollbarRef.current)}
+          >
+            <table ref={dashboardTableRef}>
               <thead>
                 <tr>
                   {dashboardColumns.map(renderColumnHeader)}
@@ -565,6 +768,20 @@ export function Dashboard({
         </section>
       </main>
       {renderSortMenu()}
+      {dashboardScrollMetrics.scrollWidth > dashboardScrollMetrics.clientWidth ? (
+        <div
+          ref={fixedScrollbarRef}
+          className="dashboard-fixed-scrollbar"
+          style={{
+            left: dashboardScrollMetrics.left,
+            width: dashboardScrollMetrics.clientWidth,
+          }}
+          aria-hidden="true"
+          onScroll={() => syncDashboardScroll(fixedScrollbarRef.current, dashboardTableWrapRef.current)}
+        >
+          <div style={{ width: dashboardScrollMetrics.scrollWidth }} />
+        </div>
+      ) : null}
     </div>
   )
 }
