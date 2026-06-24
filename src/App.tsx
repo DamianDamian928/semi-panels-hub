@@ -44,6 +44,7 @@ export default function App() {
         sourceDefinitions={workflowData.sourceDefinitions}
         createSource={workflowData.createSource}
         deleteSource={workflowData.deleteSource}
+        updateSourceConfiguration={workflowData.updateSourceConfiguration}
         registerSourceLocalFile={workflowData.registerSourceLocalFile}
         checkSourcesAccess={workflowData.checkSourcesAccess}
         checkSourceAccess={workflowData.checkSourceAccess}
@@ -100,6 +101,7 @@ export default function App() {
         sourceConnectionRolesByTarget={workflowData.sourceConnectionRolesByTarget}
         createSource={workflowData.createSource}
         deleteSource={workflowData.deleteSource}
+        updateSourceConfiguration={workflowData.updateSourceConfiguration}
         registerSourceLocalFile={workflowData.registerSourceLocalFile}
         checkSourcesAccess={workflowData.checkSourcesAccess}
         checkSourceAccess={workflowData.checkSourceAccess}
@@ -118,6 +120,7 @@ export default function App() {
       apiConnectionState={workflowData.apiConnectionState}
       apiConnectionError={workflowData.apiConnectionError}
       sourceReadStatus={workflowData.sourceReadStatus}
+      matvarForecastValidationStatus={workflowData.matvarForecastValidationStatus}
       onRefreshApi={workflowData.refreshBootstrapData}
       onOpenReview={(reviewId) => {
         setSelectedReviewId(reviewId)

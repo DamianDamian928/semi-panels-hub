@@ -22,6 +22,7 @@ import type {
   PersistenceState,
   ProcessStep,
   ReviewIssue,
+  SourceConfigurationInput,
   SourceCreateInput,
   SourceConnectionRolesByTarget,
   SourceConnectionsByTarget,
@@ -165,6 +166,7 @@ type ReviewEditorProps = {
   sourceConnectionRolesByTarget: SourceConnectionRolesByTarget | null
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
   deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
+  updateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
   checkSourceAccess: (sourceId: string) => Promise<void>
@@ -194,6 +196,7 @@ export function ReviewEditor({
   sourceConnectionRolesByTarget,
   createSource,
   deleteSource,
+  updateSourceConfiguration,
   registerSourceLocalFile,
   checkSourcesAccess,
   checkSourceAccess,
@@ -225,6 +228,7 @@ export function ReviewEditor({
     sourceSelectionError,
     handleCreateSource,
     handleDeleteSource,
+    handleUpdateSourceConfiguration,
     handleSourceFileSelection,
     handleSourceAccessCheck,
   } = useSourceRegistry({
@@ -232,6 +236,7 @@ export function ReviewEditor({
     sourceDefinitions,
     createSource,
     deleteSource,
+    updateSourceConfiguration,
     registerSourceLocalFile,
     checkSourcesAccess,
     checkSourceAccess,
@@ -1175,6 +1180,7 @@ export function ReviewEditor({
           sourcesAutoChecking={sourcesAutoChecking}
           sourceSelectionError={sourceSelectionError}
           onAddSource={handleCreateSource}
+          onUpdateSourceConfiguration={handleUpdateSourceConfiguration}
           onRemoveSource={(sourceId) => {
             void handleDeleteSource(sourceId)
           }}

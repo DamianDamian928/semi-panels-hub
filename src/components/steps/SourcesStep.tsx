@@ -1,7 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { localFileOpenLocationEndpoint } from '../../localFileHelper'
-import type { SourceCreateInput, SourceDefinition, SourceFolderSummary, SourceType } from '../../types'
+import type {
+  SourceConfigurationInput,
+  SourceCreateInput,
+  SourceDefinition,
+  SourceFolderSummary,
+  SourceType,
+} from '../../types'
 import { formatFileModifiedAt, formatFileSize, SourceTypeGlyph } from '../sharedReviewUi'
 
 type SourcesStepProps = {
@@ -14,6 +20,7 @@ type SourcesStepProps = {
   sourcesAutoChecking: boolean
   sourceSelectionError: string | null
   onAddSource: (source: SourceCreateInput) => Promise<void>
+  onUpdateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<void>
   onRemoveSource: (sourceId: string) => void
   onChooseSourceFile: (sourceId: string) => void
   onTestSourceAccess: (sourceId: string) => void
@@ -37,6 +44,11 @@ const createEmptySourceDraft = (): SourceCreateInput => ({
   expectedFormat: defaultExpectedFormatByType.File,
   owner: 'Damian',
   description: '',
+})
+
+const createSourceConfigurationDraft = (source?: SourceDefinition): SourceConfigurationInput => ({
+  name: source?.name ?? '',
+  description: source?.description ?? '',
 })
 
 const fileTypeLabelByExtension: Record<string, string> = {
@@ -113,13 +125,18 @@ export function SourcesStep({
   sourcesAutoChecking,
   sourceSelectionError,
   onAddSource,
+  onUpdateSourceConfiguration,
   onRemoveSource,
   onChooseSourceFile,
   onTestSourceAccess,
 }: SourcesStepProps) {
   const [isAddingSource, setIsAddingSource] = useState(false)
+  const [isEditingSourceConfiguration, setIsEditingSourceConfiguration] = useState(false)
   const [sourceDraft, setSourceDraft] = useState<SourceCreateInput>(() => createEmptySourceDraft())
+  const [sourceConfigurationDraft, setSourceConfigurationDraft] =
+    useState<SourceConfigurationInput>(() => createSourceConfigurationDraft())
   const [sourceFormError, setSourceFormError] = useState<string | null>(null)
+  const [sourceConfigurationError, setSourceConfigurationError] = useState<string | null>(null)
   const [sourceOpenLocationError, setSourceOpenLocationError] = useState<string | null>(null)
   const selectedSource = sourceDefinitions.find((source) => source.id === activeSourceId) ?? sourceDefinitions[0]
   const readyCount = sourceDefinitions.filter((source) => source.status === 'Ready').length
@@ -135,6 +152,12 @@ export function SourcesStep({
   const isCheckingSelectedSource = selectedSource ? sourceAccessPendingId === selectedSource.id : false
   const selectedAccessCheck = selectedSource?.accessCheck
   const isSelectedSourceError = selectedSource?.status === 'Error' || selectedAccessCheck?.status === 'Error'
+
+  useEffect(() => {
+    setSourceConfigurationDraft(createSourceConfigurationDraft(selectedSource))
+    setSourceConfigurationError(null)
+    setIsEditingSourceConfiguration(false)
+  }, [selectedSource?.id])
 
   const submitNewSource = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -179,6 +202,24 @@ export function SourcesStep({
         onChooseSourceFile(selectedSource.id)
       }
     }
+  }
+
+  const saveSourceConfiguration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!selectedSource) return
+
+    const name = sourceConfigurationDraft.name.trim()
+    if (!name) {
+      setSourceConfigurationError('Configuration name is required.')
+      return
+    }
+
+    setSourceConfigurationError(null)
+    await onUpdateSourceConfiguration(selectedSource.id, {
+      name,
+      description: sourceConfigurationDraft.description.trim(),
+    })
+    setIsEditingSourceConfiguration(false)
   }
 
   return (
@@ -255,6 +296,7 @@ export function SourcesStep({
                 onClick={() => {
                   onSelectSource(source.id)
                   setIsAddingSource(false)
+                  setIsEditingSourceConfiguration(false)
                 }}
               >
                 <span className="source-registry-type" role="img" aria-label={source.type} title={source.type}>
@@ -363,12 +405,82 @@ export function SourcesStep({
                 </div>
               </form>
             ) : (
+              isEditingSourceConfiguration ? (
+                <form className="source-form" onSubmit={(event) => {
+                  void saveSourceConfiguration(event).catch(() => undefined)
+                }}>
+                  <div className="source-connector-header">
+                    <div>
+                      <p className="section-label">Source configuration</p>
+                      <h2>{selectedSource.sourceFile?.name ?? selectedSource.name}</h2>
+                    </div>
+                  </div>
+
+                  <label className="source-form-field">
+                    <span>Configuration name</span>
+                    <input
+                      type="text"
+                      value={sourceConfigurationDraft.name}
+                      onChange={(event) => setSourceConfigurationDraft((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))}
+                    />
+                  </label>
+
+                  <label className="source-form-field">
+                    <span>Description</span>
+                    <textarea
+                      rows={5}
+                      value={sourceConfigurationDraft.description}
+                      onChange={(event) => setSourceConfigurationDraft((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))}
+                    />
+                  </label>
+
+                  {sourceConfigurationError ? <p className="source-selection-error">{sourceConfigurationError}</p> : null}
+                  {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
+
+                  <div className="source-detail-actions">
+                    <button type="submit" className="secondary-button" disabled={sourceMutationPending}>
+                      {sourceMutationPending ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={sourceMutationPending}
+                      onClick={() => {
+                        setSourceConfigurationDraft(createSourceConfigurationDraft(selectedSource))
+                        setSourceConfigurationError(null)
+                        setIsEditingSourceConfiguration(false)
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
               <>
                 <div className="source-connector-header">
                   <div>
                     <p className="section-label">Source configuration</p>
                     <h2>{selectedSource.name}</h2>
+                    {selectedSource.description ? <p>{selectedSource.description}</p> : null}
                   </div>
+                  <button
+                    type="button"
+                    className="source-detail-close-button"
+                    disabled={sourceMutationPending || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId)}
+                    onClick={() => {
+                      setSourceConfigurationDraft(createSourceConfigurationDraft(selectedSource))
+                      setSourceConfigurationError(null)
+                      setIsEditingSourceConfiguration(true)
+                    }}
+                  >
+                    Edit
+                  </button>
                 </div>
 
                 <p className="source-detail-section-title">Details</p>
@@ -473,6 +585,7 @@ export function SourcesStep({
                   </button>
                 </div>
               </>
+              )
             )}
       </aside>
     </section>

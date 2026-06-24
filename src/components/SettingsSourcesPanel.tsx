@@ -1,11 +1,12 @@
 import { useSourceRegistry } from '../hooks/useSourceRegistry'
-import type { SourceCreateInput, SourceDefinition, SourceFileMetadata } from '../types'
+import type { SourceConfigurationInput, SourceCreateInput, SourceDefinition, SourceFileMetadata } from '../types'
 import { SourcesStep } from './steps/SourcesStep'
 
 type SettingsSourcesPanelProps = {
   sourceDefinitions: SourceDefinition[]
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
   deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
+  updateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
   checkSourceAccess: (sourceId: string) => Promise<void>
@@ -17,6 +18,7 @@ export function SettingsSourcesPanel({
   sourceDefinitions,
   createSource,
   deleteSource,
+  updateSourceConfiguration,
   registerSourceLocalFile,
   checkSourcesAccess,
   checkSourceAccess,
@@ -33,6 +35,7 @@ export function SettingsSourcesPanel({
     sourceSelectionError,
     handleCreateSource,
     handleDeleteSource,
+    handleUpdateSourceConfiguration,
     handleSourceFileSelection,
     handleSourceAccessCheck,
   } = useSourceRegistry({
@@ -40,6 +43,7 @@ export function SettingsSourcesPanel({
     sourceDefinitions,
     createSource,
     deleteSource,
+    updateSourceConfiguration,
     registerSourceLocalFile,
     checkSourcesAccess,
     checkSourceAccess,
@@ -74,6 +78,7 @@ export function SettingsSourcesPanel({
           sourcesAutoChecking={sourcesAutoChecking}
           sourceSelectionError={sourceSelectionError}
           onAddSource={handleCreateSource}
+          onUpdateSourceConfiguration={handleUpdateSourceConfiguration}
           onRemoveSource={(sourceId) => {
             void handleDeleteSource(sourceId)
           }}

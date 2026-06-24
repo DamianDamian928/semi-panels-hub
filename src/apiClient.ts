@@ -3,11 +3,13 @@ import type {
   DashboardRow,
   DecisionRecord,
   DecisionStatus,
+  MatvarForecastValidationStatus,
   OutputStatus,
   OutputItem,
   PersistenceState,
   ProcessStep,
   ReviewIssue,
+  SourceConfigurationInput,
   SourceCreateInput,
   SourceConnectionRolesByTarget,
   SourceConnectionsByTarget,
@@ -390,6 +392,7 @@ type BootstrapResponse = WorkflowPayload & {
   sourceConnectionsByTarget: SourceConnectionsByTarget | null
   sourceConnectionRolesByTarget: SourceConnectionRolesByTarget | null
   sourceReadStatus: SourceReadStatus
+  matvarForecastValidationStatus: MatvarForecastValidationStatus
 }
 
 type BootstrapRequestOptions = {
@@ -488,6 +491,9 @@ export const apiDeleteSource = (sourceId: string) =>
 
 export const apiRegisterSourceLocalFile = (sourceId: string, file: SourceFileMetadata) =>
   postJson<BootstrapResponse>(`/api/sources/${encodeURIComponent(sourceId)}/local-file`, { file })
+
+export const apiUpdateSourceConfiguration = (sourceId: string, configuration: SourceConfigurationInput) =>
+  postJson<BootstrapResponse>(`/api/sources/${encodeURIComponent(sourceId)}/configuration`, configuration)
 
 export const apiCheckSourcesAccess = () => postJson<BootstrapResponse>('/api/sources/check', {})
 

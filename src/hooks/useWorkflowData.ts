@@ -10,6 +10,7 @@ import {
   apiRegisterSourceLocalFile,
   apiSaveSourceConnections,
   apiSetDecisionStatus,
+  apiUpdateSourceConfiguration,
   fetchBootstrapData,
 } from '../apiClient'
 import type { WorkflowPayload, WorkflowViewPayload } from '../apiClient'
@@ -36,9 +37,11 @@ import type {
   DecisionRecord,
   DecisionState,
   DecisionStatus,
+  MatvarForecastValidationStatus,
   OutputStatus,
   PersistenceState,
   ReviewIssue,
+  SourceConfigurationInput,
   SourceCreateInput,
   SourceConnectionRolesByTarget,
   SourceConnectionsByTarget,
@@ -81,6 +84,8 @@ export const useWorkflowData = () => {
   const [sourceConnectionRolesByTarget, setSourceConnectionRolesByTarget] =
     useState<SourceConnectionRolesByTarget | null>(null)
   const [sourceReadStatus, setSourceReadStatus] = useState<SourceReadStatus | null>(null)
+  const [matvarForecastValidationStatus, setMatvarForecastValidationStatus] =
+    useState<MatvarForecastValidationStatus | null>(null)
 
   const applyWorkflowPayload = (payload: WorkflowPayload) => {
     setReviewIssues(payload.reviewIssues)
@@ -107,6 +112,7 @@ export const useWorkflowData = () => {
     setSourceConnectionsByTarget(data.sourceConnectionsByTarget)
     setSourceConnectionRolesByTarget(data.sourceConnectionRolesByTarget)
     setSourceReadStatus(data.sourceReadStatus)
+    setMatvarForecastValidationStatus(data.matvarForecastValidationStatus)
     applyWorkflowPayload(data)
   }
 
@@ -122,6 +128,7 @@ export const useWorkflowData = () => {
     setSourceConnectionsByTarget(null)
     setSourceConnectionRolesByTarget(null)
     setSourceReadStatus(null)
+    setMatvarForecastValidationStatus(null)
   }
 
   const refreshBootstrapData = async () => {
@@ -227,6 +234,23 @@ export const useWorkflowData = () => {
     } catch (error: unknown) {
       setApiConnectionState(getApiFailureState(error))
       setApiConnectionError(getApiFailureMessage(error, 'Source could not be removed.'))
+      throw error
+    }
+  }
+
+  const updateSourceConfiguration = async (
+    sourceId: string,
+    configuration: SourceConfigurationInput,
+  ): Promise<SourceDefinition[]> => {
+    try {
+      const data = await apiUpdateSourceConfiguration(sourceId, configuration)
+      applyBootstrapPayload(data)
+      setApiConnectionState('ready')
+      setApiConnectionError(null)
+      return data.sources
+    } catch (error: unknown) {
+      setApiConnectionState(getApiFailureState(error))
+      setApiConnectionError(getApiFailureMessage(error, 'Source configuration could not be saved.'))
       throw error
     }
   }
@@ -383,9 +407,11 @@ export const useWorkflowData = () => {
     sourceConnectionsByTarget,
     sourceConnectionRolesByTarget,
     sourceReadStatus,
+    matvarForecastValidationStatus,
     refreshBootstrapData,
     createSource,
     deleteSource,
+    updateSourceConfiguration,
     registerSourceLocalFile,
     checkSourcesAccess,
     checkSourceAccess,

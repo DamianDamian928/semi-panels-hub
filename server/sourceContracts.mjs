@@ -28,6 +28,15 @@ export const dataContractDefinitions = [
     ],
   },
   {
+    id: 'dashboard:intel-po-files',
+    targetId: 'dashboard',
+    role: 'Intel PO files',
+    sourceMatcher: { fileName: '01_Intel PO', type: 'Folder' },
+    sheetName: null,
+    fields: {},
+    requiredColumns: [],
+  },
+  {
     id: 'bom-matvar:bom-l0',
     targetId: 'bom-matvar',
     role: 'BOM L0 rules',
@@ -59,7 +68,7 @@ export const dataContractDefinitions = [
     id: 'bom-matvar:oracle-structure',
     targetId: 'bom-matvar',
     role: 'Oracle structure files',
-    sourceMatcher: { sourceName: 'Matvar - Oracle', fileName: 'Matvar', type: 'Folder' },
+    sourceMatcher: { fileName: 'Matvar', type: 'Folder' },
     sheetName: null,
     fields: {
       level: 'Level',

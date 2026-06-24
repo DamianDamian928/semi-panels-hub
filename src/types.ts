@@ -50,6 +50,24 @@ export type SourceReadStatus = {
   message: string
 }
 
+export type MatvarForecastValidationIssue = {
+  id: string
+  rowNumber: number
+  intelModelNumberItem: string
+  forecastMvar: string
+  expectedMvar: string | null
+  issue: string
+}
+
+export type MatvarForecastValidationStatus = {
+  status: 'Valid' | 'Error' | 'Unavailable'
+  checkedRows: number
+  issueCount: number
+  issues: MatvarForecastValidationIssue[]
+  message: string
+  refreshedAt: string
+}
+
 export type StepPurposeContent = {
   eyebrow: string
   title: string
@@ -87,6 +105,11 @@ export type SourceCreateInput = {
   usedFor: SourceUsage[]
   expectedFormat: string
   owner: string
+  description: string
+}
+
+export type SourceConfigurationInput = {
+  name: string
   description: string
 }
 

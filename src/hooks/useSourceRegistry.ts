@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { ProcessStep, SourceCreateInput, SourceDefinition, SourceFileMetadata } from '../types'
+import type {
+  ProcessStep,
+  SourceConfigurationInput,
+  SourceCreateInput,
+  SourceDefinition,
+  SourceFileMetadata,
+} from '../types'
 import { localFileHelperEndpoint, localFolderHelperEndpoint } from '../localFileHelper'
 import type { LocalFileSelection } from '../localFileHelper'
 
@@ -8,6 +14,7 @@ type UseSourceRegistryOptions = {
   sourceDefinitions: SourceDefinition[]
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
   deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
+  updateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
   checkSourceAccess: (sourceId: string) => Promise<void>
@@ -18,6 +25,7 @@ export const useSourceRegistry = ({
   sourceDefinitions,
   createSource,
   deleteSource,
+  updateSourceConfiguration,
   registerSourceLocalFile,
   checkSourcesAccess,
   checkSourceAccess,
@@ -147,6 +155,24 @@ export const useSourceRegistry = ({
     }
   }
 
+  const handleUpdateSourceConfiguration = async (sourceId: string, configuration: SourceConfigurationInput) => {
+    setSourceMutationPending(true)
+    setSourceSelectionError(null)
+
+    try {
+      await updateSourceConfiguration(sourceId, configuration)
+    } catch (error) {
+      setSourceSelectionError(
+        error instanceof Error
+          ? error.message
+          : 'Could not save this source configuration.',
+      )
+      throw error
+    } finally {
+      setSourceMutationPending(false)
+    }
+  }
+
   return {
     activeSourceId,
     setActiveSourceId,
@@ -157,6 +183,7 @@ export const useSourceRegistry = ({
     sourceSelectionError,
     handleCreateSource,
     handleDeleteSource,
+    handleUpdateSourceConfiguration,
     handleSourceFileSelection,
     handleSourceAccessCheck,
   }
