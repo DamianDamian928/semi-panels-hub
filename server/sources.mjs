@@ -1,6 +1,8 @@
 import { constants } from 'node:fs'
 import { access, readdir, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
+import { getFusionBomConfigSummary, testFusionBomApiConnection } from './fusionBomApi.mjs'
+import { getPlmSqlConfigSummary, testPlmSqlConnection } from './plmSqlConnection.mjs'
 import { connectionTargetIds as sourceConnectionTargetIds } from './sourceUsageModel.mjs'
 import { workflowRepository } from './workflowRepository.mjs'
 
@@ -13,7 +15,7 @@ export const isLocalFilePayload = (file) =>
   typeof file.sizeBytes === 'number' &&
   typeof file.modifiedAt === 'string'
 
-const sourceTypes = new Set(['File', 'Folder', 'SQL', 'SharePoint', 'Manual export'])
+const sourceTypes = new Set(['File', 'Folder', 'SQL', 'API', 'SharePoint', 'Manual export'])
 const sourceUsages = new Set(['BOM', 'Documentation', 'Costing'])
 const connectionTargetIds = new Set(sourceConnectionTargetIds)
 
@@ -47,6 +49,7 @@ export const defaultLocationByType = {
   File: 'Waiting for local file',
   Folder: 'Waiting for folder location',
   SQL: 'Connection profile not configured',
+  API: 'API connection profile not configured',
   SharePoint: 'SharePoint location not configured',
   'Manual export': 'Waiting for local export',
 }
@@ -55,6 +58,7 @@ export const defaultExpectedFormatByType = {
   File: 'Excel workbook or CSV export',
   Folder: 'Folder path',
   SQL: 'SQL connection profile',
+  API: 'Read-only HTTP API',
   SharePoint: 'SharePoint folder or document library',
   'Manual export': 'Manual export file',
 }
@@ -62,6 +66,146 @@ export const defaultExpectedFormatByType = {
 const checkedAtLabel = (checkedAt) => checkedAt
 
 export const getSourcePath = (source) => source.sourceFile?.path
+
+const getSqlLocationLabel = (summary) => {
+  const serverLabel = summary.instance
+    ? `${summary.server}\\${summary.instance}`
+    : summary.server
+
+  return serverLabel && summary.database
+    ? `${serverLabel} / ${summary.database}`
+    : 'Connection profile not configured'
+}
+
+const checkSqlSourceAccess = async (source, checkedAt) => {
+  const summary = getPlmSqlConfigSummary()
+  const location = getSqlLocationLabel(summary)
+
+  if (!summary.configExists || !summary.server || !summary.database || !summary.userConfigured || !summary.passwordConfigured) {
+    const missingParts = [
+      !summary.configExists ? `config file ${summary.configPath}` : null,
+      !summary.server ? 'SQL_SERVER' : null,
+      !summary.database ? 'SQL_DATABASE' : null,
+      !summary.userConfigured ? 'SQL_USER' : null,
+      !summary.passwordConfigured ? 'SQL_PASSWORD' : null,
+    ].filter(Boolean)
+
+    return {
+      ...source,
+      location,
+      status: 'Needs location',
+      lastChecked: checkedAtLabel(checkedAt),
+      accessCheck: {
+        checkedAt,
+        status: 'Needs location',
+        message: `PLMAccelerate SQL profile is incomplete. Missing: ${missingParts.join(', ')}.`,
+        exists: summary.configExists,
+        readable: false,
+      },
+    }
+  }
+
+  try {
+    const result = await testPlmSqlConnection()
+    const status = result.readable ? 'Ready' : 'Error'
+
+    return {
+      ...source,
+      location,
+      status,
+      lastChecked: checkedAtLabel(checkedAt),
+      accessCheck: {
+        checkedAt,
+        status,
+        message: result.message,
+        exists: true,
+        readable: result.readable,
+      },
+    }
+  } catch (error) {
+    return {
+      ...source,
+      location,
+      status: 'Error',
+      lastChecked: checkedAtLabel(checkedAt),
+      accessCheck: {
+        checkedAt,
+        status: 'Error',
+        message: error instanceof Error
+          ? `PLMAccelerate SQL connection failed: ${error.message}`
+          : 'PLMAccelerate SQL connection failed.',
+        exists: true,
+        readable: false,
+      },
+    }
+  }
+}
+
+const getFusionBomApiLocationLabel = (summary) =>
+  summary.baseUrl
+    ? `${summary.baseUrl.replace(/\/$/, '')} / Fusion BOM`
+    : 'API connection profile not configured'
+
+const checkFusionBomApiSourceAccess = async (source, checkedAt) => {
+  const summary = getFusionBomConfigSummary()
+  const location = getFusionBomApiLocationLabel(summary)
+
+  if (!summary.configExists || !summary.keyConfigured) {
+    const missingParts = [
+      !summary.configExists ? `config file ${summary.configPath}` : null,
+      !summary.keyConfigured ? 'FUSION_BOM_API_KEY' : null,
+    ].filter(Boolean)
+
+    return {
+      ...source,
+      location,
+      status: 'Needs location',
+      lastChecked: checkedAtLabel(checkedAt),
+      accessCheck: {
+        checkedAt,
+        status: 'Needs location',
+        message: `Fusion BOM API profile is incomplete. Missing: ${missingParts.join(', ')}.`,
+        exists: summary.configExists,
+        readable: false,
+      },
+    }
+  }
+
+  try {
+    const result = await testFusionBomApiConnection()
+    const status = result.readable ? 'Ready' : 'Error'
+
+    return {
+      ...source,
+      location,
+      status,
+      lastChecked: checkedAtLabel(checkedAt),
+      accessCheck: {
+        checkedAt,
+        status,
+        message: result.message,
+        exists: result.exists,
+        readable: result.readable,
+      },
+    }
+  } catch (error) {
+    return {
+      ...source,
+      location,
+      status: 'Error',
+      lastChecked: checkedAtLabel(checkedAt),
+      accessCheck: {
+        checkedAt,
+        status: 'Error',
+        message: error instanceof Error
+          ? `Fusion BOM API connection failed: ${error.message}`
+          : 'Fusion BOM API connection failed.',
+        exists: true,
+        readable: false,
+      },
+    }
+  }
+}
 
 const getFolderFileType = (fileName) => extname(fileName).replace('.', '').toUpperCase() || 'NO EXT'
 
@@ -144,6 +288,15 @@ export const requireConfiguredContractSource = (contractId, targetId = null) => 
 
 export const checkSourceAccess = async (source) => {
   const checkedAt = new Date().toISOString()
+
+  if (source.type === 'SQL') {
+    return checkSqlSourceAccess(source, checkedAt)
+  }
+
+  if (source.type === 'API') {
+    return checkFusionBomApiSourceAccess(source, checkedAt)
+  }
+
   const path = getSourcePath(source)
 
   if (!path) {

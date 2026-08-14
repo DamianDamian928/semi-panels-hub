@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { ApiConnectionState, DashboardRow, MatvarForecastValidationStatus, SourceReadStatus } from '../types'
 import { localFileOpenLocationEndpoint } from '../localFileHelper'
 import { ApiStatusBanner } from './ApiStatusBanner'
@@ -8,14 +9,19 @@ const sourceRefreshIntervalMs = 5 * 60 * 1000
 type SortDirection = 'asc' | 'desc'
 type SortKind = 'value' | 'forecastStatus'
 type ForecastStatusFilter = 'CANCELED' | 'FORECAST' | 'ORDERED' | 'PLACED' | 'PO_ISSUE' | 'SHIPPED' | 'No status'
+type ValueFilterMode = 'include' | 'exclude'
 type DashboardSortState = { key: string; direction: SortDirection; kind: SortKind }
 type DashboardPreferences = {
   sortState: DashboardSortState | null
   forecastStatusFilters: ForecastStatusFilter[]
+  newForecastOrdersOnly: boolean
   scopeFilters: string[]
   implementationStepFilters: string[]
+  implementationStepFilterMode: ValueFilterMode
   implementationStepValidFilters: string[]
+  implementationStepValidFilterMode: ValueFilterMode
   columnTextFilters: Record<string, string>
+  columnWidths: Record<string, number>
   latestWatlowRtdOnly: boolean
 }
 type SortMenuPosition = {
@@ -45,6 +51,14 @@ const preferredMappedDashboardColumns = [
 const forecastStatusOrder = ['CANCELED', 'FORECAST', 'ORDERED', 'PLACED', 'PO_ISSUE', 'SHIPPED'] as const
 const forecastStatusFilters: ForecastStatusFilter[] = [...forecastStatusOrder, 'No status']
 const dashboardPreferencesStorageKey = 'semi-panels-hub.dashboard.preferences.v2'
+const dashboardSeenForecastOrdersStorageKey = 'semi-panels-hub.dashboard.seen-forecast-orders.v1'
+const newForecastOrderStatuses = new Set(['ORDERED', 'PO_ISSUE'])
+const dashboardColumnMinWidth = 120
+const dashboardColumnMaxWidth = 640
+const dashboardActionColumnWidth = 148
+const dashboardMinimumTableWidth = 1600
+const semiListMatvarColumnKey = '__semiListMatvar'
+const forecastMatvarColumnKey = '__forecastMatvar'
 
 const normalizeDashboardColumn = (column: string) => column.trim().replace(/\s+/g, ' ').toLowerCase()
 const normalizeForecastStatus = (status?: string) => String(status ?? '').trim().toUpperCase()
@@ -55,6 +69,23 @@ const isWatlowRtdColumn = (columnKey: string) => normalizeDashboardColumn(column
 const isImplementationStepColumn = (columnKey: string) => normalizeDashboardColumn(columnKey) === 'implementation step'
 const isImplementationStepValidColumn = (columnKey: string) =>
   normalizeDashboardColumn(columnKey).startsWith('implementation step valid')
+const getDefaultDashboardColumnWidth = (columnKey: string) => {
+  const normalizedColumn = normalizeDashboardColumn(columnKey)
+
+  if (normalizedColumn === 'intel description') return 320
+  if (normalizedColumn === 'oracle item description') return 300
+  if (normalizedColumn.startsWith('implementation step valid')) return 300
+  if (normalizedColumn === 'implementation step') return 170
+  if (normalizedColumn === 'intel po #') return 180
+  if (normalizedColumn === 'last update') return 170
+  if (normalizedColumn === 'intel rtd' || normalizedColumn === 'watlow rtd') return 160
+  if (columnKey === semiListMatvarColumnKey || columnKey === forecastMatvarColumnKey) return 170
+  if (normalizedColumn === 'scope') return 180
+
+  return 200
+}
+const clampDashboardColumnWidth = (width: number) =>
+  Math.min(dashboardColumnMaxWidth, Math.max(dashboardColumnMinWidth, Math.round(width)))
 const getForecastStatusRank = (status?: string) => {
   const rank = forecastStatusOrder.indexOf(normalizeForecastStatus(status) as typeof forecastStatusOrder[number])
   return rank === -1 ? Number.MAX_SAFE_INTEGER : rank
@@ -69,10 +100,14 @@ const getForecastStatusFilterSummary = (filters: ForecastStatusFilter[]) => {
 const getDefaultDashboardPreferences = (): DashboardPreferences => ({
   sortState: null,
   forecastStatusFilters: [],
+  newForecastOrdersOnly: false,
   scopeFilters: [],
   implementationStepFilters: [],
+  implementationStepFilterMode: 'include',
   implementationStepValidFilters: [],
+  implementationStepValidFilterMode: 'include',
   columnTextFilters: {},
+  columnWidths: {},
   latestWatlowRtdOnly: false,
 })
 
@@ -87,6 +122,9 @@ const isSortKind = (value: unknown): value is SortKind =>
 
 const isForecastStatusFilter = (value: unknown): value is ForecastStatusFilter =>
   typeof value === 'string' && forecastStatusFilters.includes(value as ForecastStatusFilter)
+
+const isValueFilterMode = (value: unknown): value is ValueFilterMode =>
+  value === 'include' || value === 'exclude'
 
 const isDashboardSortState = (value: unknown): value is DashboardSortState =>
   isRecord(value) &&
@@ -111,12 +149,14 @@ const getStoredDashboardPreferences = (): DashboardPreferences => {
     const implementationStepFiltersValue = parsedPreferences.implementationStepFilters
     const implementationStepValidFiltersValue = parsedPreferences.implementationStepValidFilters
     const columnTextFiltersValue = parsedPreferences.columnTextFilters
+    const columnWidthsValue = parsedPreferences.columnWidths
 
     return {
       sortState: isDashboardSortState(parsedPreferences.sortState) ? parsedPreferences.sortState : null,
       forecastStatusFilters: Array.isArray(forecastStatusFiltersValue)
         ? [...new Set(forecastStatusFiltersValue.filter(isForecastStatusFilter))]
         : [],
+      newForecastOrdersOnly: parsedPreferences.newForecastOrdersOnly === true,
       scopeFilters: Array.isArray(scopeFiltersValue)
         ? [...new Set(scopeFiltersValue.filter((scope): scope is string => typeof scope === 'string' && scope.length > 0))]
         : [],
@@ -124,13 +164,28 @@ const getStoredDashboardPreferences = (): DashboardPreferences => {
         ? [...new Set(implementationStepFiltersValue
           .filter((value): value is string => typeof value === 'string' && value.length > 0))]
         : [],
+      implementationStepFilterMode: isValueFilterMode(parsedPreferences.implementationStepFilterMode)
+        ? parsedPreferences.implementationStepFilterMode
+        : 'include',
       implementationStepValidFilters: Array.isArray(implementationStepValidFiltersValue)
         ? [...new Set(implementationStepValidFiltersValue
           .filter((value): value is string => typeof value === 'string' && value.length > 0))]
         : [],
+      implementationStepValidFilterMode: isValueFilterMode(parsedPreferences.implementationStepValidFilterMode)
+        ? parsedPreferences.implementationStepValidFilterMode
+        : 'include',
       columnTextFilters: isRecord(columnTextFiltersValue)
         ? Object.fromEntries(Object.entries(columnTextFiltersValue)
           .filter((entry): entry is [string, string] => typeof entry[0] === 'string' && typeof entry[1] === 'string'))
+        : {},
+      columnWidths: isRecord(columnWidthsValue)
+        ? Object.fromEntries(Object.entries(columnWidthsValue)
+          .filter((entry): entry is [string, number] =>
+            typeof entry[0] === 'string' &&
+            typeof entry[1] === 'number' &&
+            Number.isFinite(entry[1]) &&
+            entry[1] >= dashboardColumnMinWidth &&
+            entry[1] <= dashboardColumnMaxWidth))
         : {},
       latestWatlowRtdOnly: parsedPreferences.latestWatlowRtdOnly === true,
     }
@@ -144,6 +199,50 @@ const saveDashboardPreferences = (preferences: DashboardPreferences) => {
 
   try {
     window.localStorage.setItem(dashboardPreferencesStorageKey, JSON.stringify(preferences))
+  } catch {
+    // Browser storage can be unavailable in private mode or locked-down environments.
+  }
+}
+
+type SeenForecastOrdersState = {
+  initialized: boolean
+  descriptions: string[]
+}
+
+const emptySeenForecastOrdersState: SeenForecastOrdersState = {
+  initialized: false,
+  descriptions: [],
+}
+
+const getStoredSeenForecastOrdersState = (): SeenForecastOrdersState => {
+  if (typeof window === 'undefined') return emptySeenForecastOrdersState
+
+  try {
+    const rawState = window.localStorage.getItem(dashboardSeenForecastOrdersStorageKey)
+    if (!rawState) return emptySeenForecastOrdersState
+
+    const parsedState: unknown = JSON.parse(rawState)
+    if (!isRecord(parsedState)) return emptySeenForecastOrdersState
+
+    const descriptions = Array.isArray(parsedState.descriptions)
+      ? [...new Set(parsedState.descriptions
+        .filter((value): value is string => typeof value === 'string' && value.length > 0))]
+      : []
+
+    return {
+      initialized: parsedState.initialized === true,
+      descriptions,
+    }
+  } catch {
+    return emptySeenForecastOrdersState
+  }
+}
+
+const saveSeenForecastOrdersState = (state: SeenForecastOrdersState) => {
+  if (typeof window === 'undefined') return
+
+  try {
+    window.localStorage.setItem(dashboardSeenForecastOrdersStorageKey, JSON.stringify(state))
   } catch {
     // Browser storage can be unavailable in private mode or locked-down environments.
   }
@@ -180,6 +279,8 @@ const getMappedDashboardColumnLabel = (column: string) => {
   if (normalizedColumn === 'intel description') return 'Intel description'
   if (normalizedColumn === 'oracle item description') return 'Oracle Item description'
   if (normalizedColumn === 'item') return 'Matvar'
+  if (normalizedColumn === 'implementation step') return 'Status'
+  if (normalizedColumn.startsWith('implementation step valid')) return 'Status 3 mies.'
 
   return column
 }
@@ -215,6 +316,24 @@ const compareDashboardValues = (leftValue: string, rightValue: string) => {
 const normalizeColumnSearchValue = (value: string) => value.trim().toLowerCase()
 
 const getDashboardBaseRowId = (row: DashboardRow) => row.id.replace(/-forecast-\d+-\d+$/, '')
+
+const getDashboardRowIntelDescription = (row: DashboardRow) => {
+  const dashboardCells = row.dashboardCells ?? {}
+  const intelDescriptionEntry = Object.entries(dashboardCells)
+    .find(([column]) => isIntelDescriptionColumn(column))
+
+  return String(intelDescriptionEntry?.[1] ?? row.intelModel ?? '').trim()
+}
+
+const normalizeForecastOrderDescription = (value: string) =>
+  value.trim().replace(/\s+/g, ' ').toLowerCase()
+
+const getForecastOrderDescriptionKey = (row: DashboardRow) => {
+  if (!newForecastOrderStatuses.has(normalizeForecastStatus(row.forecastStatus))) return ''
+
+  const intelDescription = getDashboardRowIntelDescription(row)
+  return intelDescription ? normalizeForecastOrderDescription(intelDescription) : ''
+}
 
 const parseDashboardDateValue = (value: string) => {
   const text = String(value ?? '').trim()
@@ -260,6 +379,7 @@ type DashboardProps = {
   matvarForecastValidationStatus: MatvarForecastValidationStatus | null
   onRefreshApi: () => Promise<void>
   onOpenReview: (reviewId: string) => void
+  onOpenPdfReview: () => void
   onOpenSettings: () => void
 }
 
@@ -272,6 +392,7 @@ export function Dashboard({
   matvarForecastValidationStatus,
   onRefreshApi,
   onOpenReview,
+  onOpenPdfReview,
   onOpenSettings,
 }: DashboardProps) {
   const mappedColumns = dashboardRows.find((row) => row.dashboardColumns?.length)?.dashboardColumns ?? []
@@ -281,19 +402,32 @@ export function Dashboard({
   const [forecastStatusFiltersState, setForecastStatusFiltersState] = useState<ForecastStatusFilter[]>(
     initialDashboardPreferences.forecastStatusFilters,
   )
+  const [newForecastOrdersOnly, setNewForecastOrdersOnly] = useState(
+    initialDashboardPreferences.newForecastOrdersOnly,
+  )
   const [scopeFiltersState, setScopeFiltersState] = useState<string[]>(initialDashboardPreferences.scopeFilters)
   const [implementationStepFiltersState, setImplementationStepFiltersState] = useState<string[]>(
     initialDashboardPreferences.implementationStepFilters,
   )
+  const [implementationStepFilterMode, setImplementationStepFilterMode] = useState<ValueFilterMode>(
+    initialDashboardPreferences.implementationStepFilterMode,
+  )
   const [implementationStepValidFiltersState, setImplementationStepValidFiltersState] = useState<string[]>(
     initialDashboardPreferences.implementationStepValidFilters,
+  )
+  const [implementationStepValidFilterMode, setImplementationStepValidFilterMode] = useState<ValueFilterMode>(
+    initialDashboardPreferences.implementationStepValidFilterMode,
   )
   const [columnTextFiltersState, setColumnTextFiltersState] = useState<Record<string, string>>(
     initialDashboardPreferences.columnTextFilters,
   )
+  const [dashboardColumnWidths, setDashboardColumnWidths] = useState<Record<string, number>>(
+    initialDashboardPreferences.columnWidths,
+  )
   const [latestWatlowRtdOnly, setLatestWatlowRtdOnly] = useState(initialDashboardPreferences.latestWatlowRtdOnly)
   const [isMatvarValidationOpen, setIsMatvarValidationOpen] = useState(false)
   const [isRefreshingSources, setIsRefreshingSources] = useState(false)
+  const [seenForecastOrdersState, setSeenForecastOrdersState] = useState(getStoredSeenForecastOrdersState)
   const [openSortMenuKey, setOpenSortMenuKey] = useState<string | null>(null)
   const [sortMenuPosition, setSortMenuPosition] = useState<SortMenuPosition | null>(null)
   const refreshApiRef = useRef(onRefreshApi)
@@ -310,13 +444,53 @@ export function Dashboard({
   const watlowRtdColumnKey = mappedColumns.find((column) => isWatlowRtdColumn(column)) ?? null
   const implementationStepColumnKey = mappedColumns.find((column) => isImplementationStepColumn(column)) ?? null
   const implementationStepValidColumnKey = mappedColumns.find((column) => isImplementationStepValidColumn(column)) ?? null
+  const currentForecastOrderDescriptionKeys = useMemo(
+    () => [...new Set(dashboardRows
+      .map(getForecastOrderDescriptionKey)
+      .filter(Boolean))],
+    [dashboardRows],
+  )
+  const seenForecastOrderDescriptionKeys = useMemo(
+    () => new Set(seenForecastOrdersState.descriptions),
+    [seenForecastOrdersState.descriptions],
+  )
+  const newForecastOrderDescriptionKeys = useMemo(
+    () => new Set(seenForecastOrdersState.initialized
+      ? currentForecastOrderDescriptionKeys.filter((key) => !seenForecastOrderDescriptionKeys.has(key))
+      : []),
+    [currentForecastOrderDescriptionKeys, seenForecastOrderDescriptionKeys, seenForecastOrdersState.initialized],
+  )
+  const getNewForecastOrderDescriptionKey = (row: DashboardRow) => {
+    const key = getForecastOrderDescriptionKey(row)
+    return key && newForecastOrderDescriptionKeys.has(key) ? key : ''
+  }
+  const isNewForecastOrder = (row: DashboardRow) => {
+    return Boolean(getNewForecastOrderDescriptionKey(row))
+  }
   const dashboardColumns = useMemo<DashboardColumn[]>(
     () => isMappedDashboard
-      ? orderMappedDashboardColumns(mappedColumns).map((column) => ({
-          key: column,
-          label: getMappedDashboardColumnLabel(column),
-          getValue: (row) => row.dashboardCells?.[column] ?? '',
-        }))
+      ? orderMappedDashboardColumns(mappedColumns).flatMap((column) => {
+          if (normalizeDashboardColumn(column) === 'item') {
+            return [
+              {
+                key: semiListMatvarColumnKey,
+                label: 'Semi List Matvar',
+                getValue: (row) => row.semiListMatvar ?? '',
+              },
+              {
+                key: forecastMatvarColumnKey,
+                label: 'Forecast Matvar',
+                getValue: (row) => row.forecastMatvar ?? '',
+              },
+            ]
+          }
+
+          return [{
+            key: column,
+            label: getMappedDashboardColumnLabel(column),
+            getValue: (row) => row.dashboardCells?.[column] ?? '',
+          }]
+        })
       : [
           {
             key: 'intelModel',
@@ -340,6 +514,23 @@ export function Dashboard({
           },
         ],
     [isMappedDashboard, mappedColumns],
+  )
+  const dashboardColumnWidthByKey = useMemo(
+    () => Object.fromEntries(dashboardColumns.map((column) => [
+      column.key,
+      dashboardColumnWidths[column.key] ?? getDefaultDashboardColumnWidth(column.key),
+    ])),
+    [dashboardColumnWidths, dashboardColumns],
+  )
+  const dashboardTableWidth = useMemo(
+    () => Math.max(
+      dashboardMinimumTableWidth,
+      dashboardColumns.reduce(
+        (totalWidth, column) => totalWidth + dashboardColumnWidthByKey[column.key],
+        dashboardActionColumnWidth,
+      ),
+    ),
+    [dashboardColumnWidthByKey, dashboardColumns],
   )
   const scopeFilterOptions = useMemo(() => {
     if (!scopeColumnKey) return []
@@ -366,7 +557,7 @@ export function Dashboard({
       .sort((left, right) => textCollator.compare(left, right))
   }, [dashboardRows, implementationStepValidColumnKey])
 
-  const filteredDashboardRows = useMemo(() => {
+  const baseFilteredDashboardRows = useMemo(() => {
     const activeColumnFilters = dashboardColumns
       .map((column) => ({
         column,
@@ -387,12 +578,16 @@ export function Dashboard({
         ? String(row.dashboardCells?.[implementationStepColumnKey] ?? '').trim()
         : ''
       const matchesImplementationStep = implementationStepFiltersState.length === 0 ||
-        implementationStepFiltersState.includes(implementationStep)
+        (implementationStepFilterMode === 'exclude'
+          ? !implementationStepFiltersState.includes(implementationStep)
+          : implementationStepFiltersState.includes(implementationStep))
       const implementationStepValid = implementationStepValidColumnKey
         ? String(row.dashboardCells?.[implementationStepValidColumnKey] ?? '').trim()
         : ''
       const matchesImplementationStepValid = implementationStepValidFiltersState.length === 0 ||
-        implementationStepValidFiltersState.includes(implementationStepValid)
+        (implementationStepValidFilterMode === 'exclude'
+          ? !implementationStepValidFiltersState.includes(implementationStepValid)
+          : implementationStepValidFiltersState.includes(implementationStepValid))
       const matchesColumnFilters = activeColumnFilters.every(({ column, filter }) => {
         const value = isIntelDescriptionColumn(column.key)
           ? `${column.getValue(row)} ${row.forecastStatus ?? ''}`
@@ -413,18 +608,21 @@ export function Dashboard({
     dashboardRows,
     forecastStatusFiltersState,
     implementationStepColumnKey,
+    implementationStepFilterMode,
     implementationStepFiltersState,
     implementationStepValidColumnKey,
+    implementationStepValidFilterMode,
     implementationStepValidFiltersState,
     scopeColumnKey,
     scopeFiltersState,
   ])
 
-  const latestWatlowRtdFilteredRows = useMemo(() => {
-    if (!latestWatlowRtdOnly || !watlowRtdColumnKey) return filteredDashboardRows
+  const latestWatlowRtdBaseFilteredRows = useMemo(() => {
+    if (!latestWatlowRtdOnly || !watlowRtdColumnKey) return baseFilteredDashboardRows
 
+    const prioritizeOrderedRows = forecastStatusFiltersState.includes('ORDERED')
     const rowsByBaseId = new Map<string, DashboardRow[]>()
-    filteredDashboardRows.forEach((row) => {
+    baseFilteredDashboardRows.forEach((row) => {
       const baseId = getDashboardBaseRowId(row)
       rowsByBaseId.set(baseId, [...(rowsByBaseId.get(baseId) ?? []), row])
     })
@@ -432,29 +630,47 @@ export function Dashboard({
     return Array.from(rowsByBaseId.values()).flatMap((rows) => {
       if (rows.length <= 1) return rows
 
-      const rowDateEntries = rows
+      const orderedRows = prioritizeOrderedRows
+        ? rows.filter((row) => normalizeForecastStatus(row.forecastStatus) === 'ORDERED')
+        : []
+      const candidateRows = orderedRows.length ? orderedRows : rows
+      const rowDateEntries = candidateRows
         .map((row) => ({
           row,
           time: parseDashboardDateValue(row.dashboardCells?.[watlowRtdColumnKey] ?? ''),
         }))
         .filter((entry): entry is { row: DashboardRow; time: number } => entry.time !== null)
 
-      if (!rowDateEntries.length) return rows
+      if (!rowDateEntries.length) return candidateRows
 
       const latestTime = Math.max(...rowDateEntries.map((entry) => entry.time))
       return rowDateEntries
         .filter((entry) => entry.time === latestTime)
         .map((entry) => entry.row)
     })
-  }, [filteredDashboardRows, latestWatlowRtdOnly, watlowRtdColumnKey])
+  }, [baseFilteredDashboardRows, forecastStatusFiltersState, latestWatlowRtdOnly, watlowRtdColumnKey])
+
+  const newForecastOrderCount = useMemo(
+    () => new Set(latestWatlowRtdBaseFilteredRows
+      .map(getNewForecastOrderDescriptionKey)
+      .filter(Boolean)).size,
+    [latestWatlowRtdBaseFilteredRows, newForecastOrderDescriptionKeys],
+  )
+
+  const newForecastOrderFilteredRows = useMemo(
+    () => newForecastOrdersOnly
+      ? latestWatlowRtdBaseFilteredRows.filter(isNewForecastOrder)
+      : latestWatlowRtdBaseFilteredRows,
+    [latestWatlowRtdBaseFilteredRows, newForecastOrderDescriptionKeys, newForecastOrdersOnly],
+  )
 
   const sortedDashboardRows = useMemo(() => {
-    if (!sortState) return latestWatlowRtdFilteredRows
+    if (!sortState) return newForecastOrderFilteredRows
 
     const activeColumn = dashboardColumns.find((column) => column.key === sortState.key)
-    if (!activeColumn) return latestWatlowRtdFilteredRows
+    if (!activeColumn) return newForecastOrderFilteredRows
 
-    return latestWatlowRtdFilteredRows
+    return newForecastOrderFilteredRows
       .map((row, index) => ({ row, index }))
       .sort((left, right) => {
         if (sortState.kind === 'forecastStatus') {
@@ -471,7 +687,7 @@ export function Dashboard({
         return directedResult || left.index - right.index
       })
       .map(({ row }) => row)
-  }, [dashboardColumns, latestWatlowRtdFilteredRows, sortState])
+  }, [dashboardColumns, newForecastOrderFilteredRows, sortState])
 
   const setColumnSort = (columnKey: string, direction: SortDirection) => {
     setSortState({ key: columnKey, direction, kind: 'value' })
@@ -509,9 +725,12 @@ export function Dashboard({
 
   const clearDashboardFilters = () => {
     setForecastStatusFiltersState([])
+    setNewForecastOrdersOnly(false)
     setScopeFiltersState([])
     setImplementationStepFiltersState([])
+    setImplementationStepFilterMode('include')
     setImplementationStepValidFiltersState([])
+    setImplementationStepValidFilterMode('include')
     setColumnTextFiltersState({})
     setLatestWatlowRtdOnly(false)
   }
@@ -539,6 +758,54 @@ export function Dashboard({
     })
   }
 
+  const setDashboardColumnWidth = (columnKey: string, width: number) => {
+    setDashboardColumnWidths((current) => ({
+      ...current,
+      [columnKey]: clampDashboardColumnWidth(width),
+    }))
+  }
+
+  const resetDashboardColumnWidth = (columnKey: string) => {
+    setDashboardColumnWidths((current) => {
+      const nextWidths = { ...current }
+      delete nextWidths[columnKey]
+      return nextWidths
+    })
+  }
+
+  const resetDashboardColumnWidths = () => {
+    setDashboardColumnWidths({})
+  }
+
+  const startDashboardColumnResize = (columnKey: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const startX = event.clientX
+    const startWidth = dashboardColumnWidthByKey[columnKey] ?? getDefaultDashboardColumnWidth(columnKey)
+    const originalBodyCursor = document.body.style.cursor
+    const originalBodyUserSelect = document.body.style.userSelect
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setDashboardColumnWidth(columnKey, startWidth + moveEvent.clientX - startX)
+    }
+
+    const handlePointerUp = () => {
+      document.body.style.cursor = originalBodyCursor
+      document.body.style.userSelect = originalBodyUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', handlePointerUp)
+  }
+
   const activeColumnTextFilters = dashboardColumns
     .map((column) => ({
       column,
@@ -546,12 +813,14 @@ export function Dashboard({
     }))
     .filter(({ value }) => value.trim().length > 0)
   const hasActiveDashboardFilters = forecastStatusFiltersState.length > 0 ||
+    newForecastOrdersOnly ||
     scopeFiltersState.length > 0 ||
     implementationStepFiltersState.length > 0 ||
     implementationStepValidFiltersState.length > 0 ||
     activeColumnTextFilters.length > 0 ||
     latestWatlowRtdOnly
   const activeDashboardFilterCount = forecastStatusFiltersState.length +
+    (newForecastOrdersOnly ? 1 : 0) +
     scopeFiltersState.length +
     implementationStepFiltersState.length +
     implementationStepValidFiltersState.length +
@@ -592,6 +861,19 @@ export function Dashboard({
         ? current.filter((item) => item !== status)
         : [...current, status],
     )
+  }
+
+  const markAllForecastOrdersSeen = () => {
+    const nextState = {
+      initialized: true,
+      descriptions: [...new Set([
+        ...seenForecastOrdersState.descriptions,
+        ...currentForecastOrderDescriptionKeys,
+      ])],
+    }
+
+    setSeenForecastOrdersState(nextState)
+    saveSeenForecastOrdersState(nextState)
   }
 
   const toggleScopeFilter = (scope: string) => {
@@ -672,12 +954,20 @@ export function Dashboard({
     return (
       <div className="dashboard-intel-description-cell">
         <span>{column.getValue(row)}</span>
-        {row.forecastStatus ? (
-          <span className={`dashboard-forecast-status dashboard-forecast-status-${row.forecastStatus.toLowerCase()}`}>
-            <span className="dashboard-forecast-status-dot" aria-hidden="true" />
-            {row.forecastStatus}
-          </span>
-        ) : null}
+        <span className="dashboard-intel-description-badges">
+          {row.forecastStatus ? (
+            <span className={`dashboard-forecast-status dashboard-forecast-status-${row.forecastStatus.toLowerCase()}`}>
+              <span className="dashboard-forecast-status-dot" aria-hidden="true" />
+              {row.forecastStatus}
+            </span>
+          ) : null}
+          {isNewForecastOrder(row) ? (
+            <span className="dashboard-new-forecast-order-badge" title="New since last seen">
+              <span className="dashboard-new-forecast-order-dot" aria-hidden="true" />
+              NEW
+            </span>
+          ) : null}
+        </span>
       </div>
     )
   }
@@ -698,7 +988,7 @@ export function Dashboard({
     const hasColumnIndicator = isSortActive ||
       Boolean(columnTextFilter) ||
       (isWatlowRtd && latestWatlowRtdOnly) ||
-      (isIntelDescription && Boolean(forecastStatusFilterSummary)) ||
+      (isIntelDescription && (Boolean(forecastStatusFilterSummary) || newForecastOrdersOnly)) ||
       (isScope && Boolean(scopeFilterSummary)) ||
       (isImplementationStep && Boolean(implementationStepFilterSummary)) ||
       (isImplementationStepValid && Boolean(implementationStepValidFilterSummary))
@@ -743,6 +1033,14 @@ export function Dashboard({
             </span>
           </button>
         </div>
+        <button
+          type="button"
+          className="dashboard-column-resize-handle"
+          aria-label={`Resize ${column.label} column`}
+          title="Drag to resize column"
+          onPointerDown={(event) => startDashboardColumnResize(column.key, event)}
+          onDoubleClick={() => resetDashboardColumnWidth(column.key)}
+        />
       </th>
     )
   }
@@ -759,6 +1057,8 @@ export function Dashboard({
     const isImplementationStep = isMappedDashboard && isImplementationStepColumn(column.key)
     const isImplementationStepValid = isMappedDashboard && isImplementationStepValidColumn(column.key)
     const columnTextFilter = columnTextFiltersState[column.key] ?? ''
+    const hasCustomColumnWidth = dashboardColumnWidths[column.key] !== undefined
+    const hasCustomColumnWidths = Object.keys(dashboardColumnWidths).length > 0
 
     return (
       <div
@@ -825,6 +1125,19 @@ export function Dashboard({
         ) : null}
         {isIntelDescription ? (
           <>
+            <div className="dashboard-sort-menu-section" role="group" aria-label="Filter by new forecast orders">
+              <span className="dashboard-sort-menu-label">New orders</span>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={newForecastOrdersOnly}
+                className={newForecastOrdersOnly ? 'dashboard-sort-menu-selected' : undefined}
+                onClick={() => setNewForecastOrdersOnly((current) => !current)}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                New only
+              </button>
+            </div>
             <button type="button" role="menuitem" onClick={() => setForecastStatusSort(column.key, 'asc')}>
               <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-status" aria-hidden="true" />
               Sort status A to Z
@@ -896,67 +1209,138 @@ export function Dashboard({
           </div>
         ) : null}
         {isImplementationStep ? (
-          <div className="dashboard-sort-menu-section" role="group" aria-label="Filter by implementation step value">
-            <span className="dashboard-sort-menu-label">Filter values</span>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={implementationStepFiltersState.length === 0}
-              onClick={clearImplementationStepFilters}
-            >
-              <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-clear" aria-hidden="true" />
-              All values
-            </button>
-            {implementationStepFilterOptions.map((value) => {
-              const isFilterSelected = implementationStepFiltersState.includes(value)
+          <>
+            <div className="dashboard-sort-menu-section" role="group" aria-label="Implementation step filter mode">
+              <span className="dashboard-sort-menu-label">Filter mode</span>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={implementationStepFilterMode === 'include'}
+                className={implementationStepFilterMode === 'include' ? 'dashboard-sort-menu-selected' : undefined}
+                onClick={() => setImplementationStepFilterMode('include')}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                Show selected
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={implementationStepFilterMode === 'exclude'}
+                className={implementationStepFilterMode === 'exclude' ? 'dashboard-sort-menu-selected' : undefined}
+                onClick={() => setImplementationStepFilterMode('exclude')}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                Exclude selected
+              </button>
+            </div>
+            <div className="dashboard-sort-menu-section" role="group" aria-label="Filter by implementation step value">
+              <span className="dashboard-sort-menu-label">Filter values</span>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={implementationStepFiltersState.length === 0}
+                onClick={clearImplementationStepFilters}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-clear" aria-hidden="true" />
+                All values
+              </button>
+              {implementationStepFilterOptions.map((value) => {
+                const isFilterSelected = implementationStepFiltersState.includes(value)
 
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={isFilterSelected}
-                  className={isFilterSelected ? 'dashboard-sort-menu-selected' : undefined}
-                  onClick={() => toggleImplementationStepFilter(value)}
-                >
-                  <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
-                  {value}
-                </button>
-              )
-            })}
-          </div>
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={isFilterSelected}
+                    className={isFilterSelected ? 'dashboard-sort-menu-selected' : undefined}
+                    onClick={() => toggleImplementationStepFilter(value)}
+                  >
+                    <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                    {value}
+                  </button>
+                )
+              })}
+            </div>
+          </>
         ) : null}
         {isImplementationStepValid ? (
-          <div className="dashboard-sort-menu-section" role="group" aria-label="Filter by implementation step valid value">
-            <span className="dashboard-sort-menu-label">Filter values</span>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={implementationStepValidFiltersState.length === 0}
-              onClick={clearImplementationStepValidFilters}
-            >
-              <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-clear" aria-hidden="true" />
-              All values
-            </button>
-            {implementationStepValidFilterOptions.map((value) => {
-              const isFilterSelected = implementationStepValidFiltersState.includes(value)
+          <>
+            <div className="dashboard-sort-menu-section" role="group" aria-label="Implementation step valid filter mode">
+              <span className="dashboard-sort-menu-label">Filter mode</span>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={implementationStepValidFilterMode === 'include'}
+                className={implementationStepValidFilterMode === 'include' ? 'dashboard-sort-menu-selected' : undefined}
+                onClick={() => setImplementationStepValidFilterMode('include')}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                Show selected
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={implementationStepValidFilterMode === 'exclude'}
+                className={implementationStepValidFilterMode === 'exclude' ? 'dashboard-sort-menu-selected' : undefined}
+                onClick={() => setImplementationStepValidFilterMode('exclude')}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                Exclude selected
+              </button>
+            </div>
+            <div className="dashboard-sort-menu-section" role="group" aria-label="Filter by implementation step valid value">
+              <span className="dashboard-sort-menu-label">Filter values</span>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={implementationStepValidFiltersState.length === 0}
+                onClick={clearImplementationStepValidFilters}
+              >
+                <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-clear" aria-hidden="true" />
+                All values
+              </button>
+              {implementationStepValidFilterOptions.map((value) => {
+                const isFilterSelected = implementationStepValidFiltersState.includes(value)
 
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={isFilterSelected}
-                  className={isFilterSelected ? 'dashboard-sort-menu-selected' : undefined}
-                  onClick={() => toggleImplementationStepValidFilter(value)}
-                >
-                  <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
-                  {value}
-                </button>
-              )
-            })}
-          </div>
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={isFilterSelected}
+                    className={isFilterSelected ? 'dashboard-sort-menu-selected' : undefined}
+                    onClick={() => toggleImplementationStepValidFilter(value)}
+                  >
+                    <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-check" aria-hidden="true" />
+                    {value}
+                  </button>
+                )
+              })}
+            </div>
+          </>
         ) : null}
+        <div className="dashboard-sort-menu-section" role="group" aria-label="Column width controls">
+          <span className="dashboard-sort-menu-label">Column width</span>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!hasCustomColumnWidth}
+            onClick={() => resetDashboardColumnWidth(column.key)}
+          >
+            <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-width" aria-hidden="true" />
+            Reset column width
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!hasCustomColumnWidths}
+            onClick={resetDashboardColumnWidths}
+          >
+            <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-width" aria-hidden="true" />
+            Reset all widths
+          </button>
+        </div>
         <button type="button" role="menuitem" disabled={!sortState} onClick={clearColumnSort}>
           <span className="dashboard-sort-menu-icon dashboard-sort-menu-icon-clear" aria-hidden="true" />
           Clear sort
@@ -964,6 +1348,22 @@ export function Dashboard({
       </div>
     )
   }
+
+  useEffect(() => {
+    if (seenForecastOrdersState.initialized || dashboardRows.length === 0) return
+
+    const nextState = {
+      initialized: true,
+      descriptions: currentForecastOrderDescriptionKeys,
+    }
+
+    setSeenForecastOrdersState(nextState)
+    saveSeenForecastOrdersState(nextState)
+  }, [
+    currentForecastOrderDescriptionKeys,
+    dashboardRows.length,
+    seenForecastOrdersState.initialized,
+  ])
 
   useEffect(() => {
     refreshApiRef.current = onRefreshApi
@@ -993,16 +1393,24 @@ export function Dashboard({
     saveDashboardPreferences({
       sortState,
       forecastStatusFilters: forecastStatusFiltersState,
+      newForecastOrdersOnly,
       scopeFilters: scopeFiltersState,
       implementationStepFilters: implementationStepFiltersState,
+      implementationStepFilterMode,
       implementationStepValidFilters: implementationStepValidFiltersState,
+      implementationStepValidFilterMode,
       columnTextFilters: columnTextFiltersState,
+      columnWidths: dashboardColumnWidths,
       latestWatlowRtdOnly,
     })
   }, [
     columnTextFiltersState,
+    dashboardColumnWidths,
     forecastStatusFiltersState,
+    newForecastOrdersOnly,
+    implementationStepFilterMode,
     implementationStepFiltersState,
+    implementationStepValidFilterMode,
     implementationStepValidFiltersState,
     latestWatlowRtdOnly,
     scopeFiltersState,
@@ -1028,6 +1436,16 @@ export function Dashboard({
     setImplementationStepValidFiltersState((current) =>
       current.filter((value) => implementationStepValidFilterOptions.includes(value)))
   }, [implementationStepValidColumnKey, implementationStepValidFilterOptions])
+
+  useEffect(() => {
+    const columnKeys = new Set(dashboardColumns.map((column) => column.key))
+
+    setDashboardColumnWidths((current) => {
+      const nextWidths = Object.fromEntries(Object.entries(current).filter(([columnKey]) => columnKeys.has(columnKey)))
+
+      return Object.keys(nextWidths).length === Object.keys(current).length ? current : nextWidths
+    })
+  }, [dashboardColumns])
 
   useEffect(() => {
     const tableWrap = dashboardTableWrapRef.current
@@ -1059,7 +1477,7 @@ export function Dashboard({
       window.removeEventListener('resize', updateScrollMetrics)
       resizeObserver.disconnect()
     }
-  }, [dashboardColumns.length, sortedDashboardRows.length])
+  }, [dashboardColumns.length, dashboardTableWidth, sortedDashboardRows.length])
 
   useEffect(() => {
     if (!openSortMenuKey) return
@@ -1106,15 +1524,6 @@ export function Dashboard({
         </div>
 
         <div className="header-actions">
-          <button
-            type="button"
-            className={`dashboard-matvar-status dashboard-matvar-status-header dashboard-matvar-status-${matvarValidationStatusClass}`}
-            onClick={() => setIsMatvarValidationOpen(true)}
-            title={matvarValidationDetail}
-          >
-            <span className="dashboard-matvar-status-dot" aria-hidden="true" />
-            {matvarValidationLabel}
-          </button>
           <ApiStatusBanner
             state={apiConnectionState}
             error={apiConnectionError}
@@ -1142,6 +1551,9 @@ export function Dashboard({
           </button>
           <button type="button" className="header-button" onClick={onOpenSettings}>
             Settings
+          </button>
+          <button type="button" className="header-button" onClick={onOpenPdfReview}>
+            PDF Review
           </button>
         </div>
       </header>
@@ -1174,6 +1586,17 @@ export function Dashboard({
                         <span aria-hidden="true">x</span>
                       </button>
                     ))}
+                    {newForecastOrdersOnly ? (
+                      <button
+                        type="button"
+                        className="dashboard-filter-chip"
+                        onClick={() => setNewForecastOrdersOnly(false)}
+                        aria-label="Remove new orders filter"
+                      >
+                        New orders only
+                        <span aria-hidden="true">x</span>
+                      </button>
+                    ) : null}
                     {scopeFiltersState.map((scope) => (
                       <button
                         key={`scope-${scope}`}
@@ -1192,9 +1615,9 @@ export function Dashboard({
                         type="button"
                         className="dashboard-filter-chip"
                         onClick={() => toggleImplementationStepFilter(value)}
-                        aria-label={`Remove implementation step filter ${value}`}
+                        aria-label={`Remove implementation step filter ${implementationStepFilterMode === 'exclude' ? `not ${value}` : value}`}
                       >
-                        Implementation step: {value}
+                        Implementation step: {implementationStepFilterMode === 'exclude' ? `not ${value}` : value}
                         <span aria-hidden="true">x</span>
                       </button>
                     ))}
@@ -1204,9 +1627,9 @@ export function Dashboard({
                         type="button"
                         className="dashboard-filter-chip"
                         onClick={() => toggleImplementationStepValidFilter(value)}
-                        aria-label={`Remove implementation step valid filter ${value}`}
+                        aria-label={`Remove implementation step valid filter ${implementationStepValidFilterMode === 'exclude' ? `not ${value}` : value}`}
                       >
-                        Implementation valid: {value}
+                        Implementation valid: {implementationStepValidFilterMode === 'exclude' ? `not ${value}` : value}
                         <span aria-hidden="true">x</span>
                       </button>
                     ))}
@@ -1239,6 +1662,42 @@ export function Dashboard({
               ) : null}
             </div>
             <div className="dashboard-filter-summary-actions">
+              <button
+                type="button"
+                className={`dashboard-matvar-status dashboard-matvar-status-toolbar dashboard-matvar-status-${matvarValidationStatusClass}`}
+                onClick={() => setIsMatvarValidationOpen(true)}
+                title={matvarValidationDetail}
+              >
+                <span className="dashboard-matvar-status-dot" aria-hidden="true" />
+                {matvarValidationLabel}
+              </button>
+              <button
+                type="button"
+                className={[
+                  'dashboard-new-orders-count',
+                  newForecastOrderCount > 0 ? 'dashboard-new-orders-count-has-new' : '',
+                  newForecastOrdersOnly ? 'dashboard-new-orders-count-active' : '',
+                ].filter(Boolean).join(' ')}
+                onClick={() => setNewForecastOrdersOnly((current) => !current)}
+                disabled={newForecastOrderCount === 0 && !newForecastOrdersOnly}
+                aria-pressed={newForecastOrdersOnly}
+                title={
+                  newForecastOrderCount > 0
+                    ? 'Show new ORDERED and PO_ISSUE orders only'
+                    : 'No new ORDERED or PO_ISSUE orders since last seen'
+                }
+              >
+                New Orders: {newForecastOrderCount}
+              </button>
+              {newForecastOrderCount > 0 ? (
+                <button
+                  type="button"
+                  className="dashboard-mark-seen-button"
+                  onClick={markAllForecastOrdersSeen}
+                >
+                  Mark all seen
+                </button>
+              ) : null}
               <span className="dashboard-filter-result-count">
                 Showing {sortedDashboardRows.length} of {dashboardRows.length}
               </span>
@@ -1254,7 +1713,19 @@ export function Dashboard({
             className="table-wrap dashboard-table-wrap"
             onScroll={() => syncDashboardScroll(dashboardTableWrapRef.current, fixedScrollbarRef.current)}
           >
-            <table ref={dashboardTableRef}>
+            <table
+              ref={dashboardTableRef}
+              style={{
+                width: dashboardTableWidth,
+                minWidth: dashboardTableWidth,
+              }}
+            >
+              <colgroup>
+                {dashboardColumns.map((column) => (
+                  <col key={column.key} style={{ width: dashboardColumnWidthByKey[column.key] }} />
+                ))}
+                <col style={{ width: dashboardActionColumnWidth }} />
+              </colgroup>
               <thead>
                 <tr>
                   {dashboardColumns.map(renderColumnHeader)}

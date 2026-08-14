@@ -3,6 +3,7 @@ export type MainStage = 'BOM' | 'Documentation' | 'Costing'
 export type ProcessStep = 'Sources' | 'Comparison' | 'Validation' | 'Decisions' | 'Output' | 'AI Assistant'
 export type AppView =
   | 'dashboard'
+  | 'pdf-review'
   | 'settings'
   | 'settings-sources'
   | 'settings-diagnostics'
@@ -32,6 +33,8 @@ export type DashboardRow = {
   owner: string
   lastUpdated: string
   forecastStatus?: string
+  forecastMatvar?: string
+  semiListMatvar?: string
   poDocuments?: {
     poNumber: string
     name: string
@@ -96,7 +99,7 @@ export type SourceDefinition = {
   accessCheck?: SourceAccessCheck
 }
 
-export type SourceType = 'File' | 'Folder' | 'SQL' | 'SharePoint' | 'Manual export'
+export type SourceType = 'File' | 'Folder' | 'SQL' | 'API' | 'SharePoint' | 'Manual export'
 export type SourceUsage = 'BOM' | 'Documentation' | 'Costing'
 
 export type SourceCreateInput = {

@@ -208,6 +208,28 @@ const getValidationStates = () =>
     ]),
   )
 
+const ensureFusionBomApiSource = () => {
+  const fusionBomSource = sources.find((source) => source.id === 'source-fusion-bom-api')
+  if (!fusionBomSource) return
+
+  const existingSourceById = getRecord('sources', fusionBomSource.id)
+  const existingSourceByName = listRecords('sources').find((source) => source.name === fusionBomSource.name)
+
+  if (!existingSourceById && !existingSourceByName) {
+    const { position } = nextRecordPositionStatement.get('sources')
+    insertRecordStatement.run('sources', fusionBomSource.id, serialize(fusionBomSource), position)
+  }
+
+  if (!getRecord('validation_states', fusionBomSource.name)) {
+    updateValidationState(fusionBomSource.name, {
+      state: 'Not checked',
+      message: 'Fusion BOM API source registered. Waiting for access check.',
+    })
+  }
+}
+
+ensureFusionBomApiSource()
+
 const addAuditEvent = (event) => {
   const { position } = nextAuditPositionStatement.get()
   insertRecordStatement.run('audit_events', event.id, serialize(event), position)

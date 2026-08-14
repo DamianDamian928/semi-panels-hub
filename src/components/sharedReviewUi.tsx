@@ -25,11 +25,6 @@ export const statusClassName: Record<ReviewStatus, string> = {
 
 export const sidebarSteps: SidebarStepDefinition[] = [
   { step: 'Sources', label: 'Sources', icon: 'sources' },
-  { step: 'Comparison', label: 'Comparison', icon: 'comparison' },
-  { step: 'Validation', label: 'Validation', icon: 'validation' },
-  { step: 'Decisions', label: 'Decisions', icon: 'decisions' },
-  { step: 'Output', label: 'Output', icon: 'output' },
-  { step: 'AI Assistant', label: 'AI Assistant', icon: 'aiAssistant' },
 ]
 
 export const connectionTree: Record<MainStage, ConnectionTreeSection[]> = {
@@ -212,6 +207,13 @@ export function SourceTypeGlyph({ type, className, ...props }: { type: string; c
         <path d="M5 6.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
         <path d="M5 11.5v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5" />
       </>
+    ) : type === 'API' ? (
+      <>
+        <path d="M8 8.5 4.5 12 8 15.5" />
+        <path d="M16 8.5 19.5 12 16 15.5" />
+        <path d="m13.5 6.5-3 11" />
+        <path d="M6.5 3.5h11a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z" />
+      </>
     ) : type === 'SharePoint' ? (
       <>
         <path d="M8 7.5a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z" />
@@ -254,7 +256,7 @@ export const sourceCardTemplates: Record<string, ConnectionCard[]> = {
   ],
   l1: [
     { id: 'fishbowl-l1', title: 'Fishbowl', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'Fishbowl', line2Label: 'Mode', line2Value: 'Connected', status: 'Connected' },
-    { id: 'plm-sql-l1', title: 'PLM SQL connection', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'PLM SQL connection', line2Label: 'Mode', line2Value: 'Connecting', status: 'Connecting' },
+    { id: 'plm-sql-l1', title: 'PLMAccelerate SQL', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'PLMAccelerate SQL', line2Label: 'Mode', line2Value: 'Connecting', status: 'Connecting' },
     { id: 'empty-b', title: 'Choose source', subtitle: 'Empty slot', line1Label: 'Source', line1Value: 'Not selected', line2Label: 'Mode', line2Value: 'Waiting', status: 'Not connected' },
   ],
   l2: [
@@ -262,7 +264,7 @@ export const sourceCardTemplates: Record<string, ConnectionCard[]> = {
     { id: 'parts-bom-l2', title: 'Parts&BOM', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'Parts&BOM', line2Label: 'Mode', line2Value: 'Connected', status: 'Connected' },
   ],
   l3: [
-    { id: 'plm-sql-l3', title: 'PLM SQL connection', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'PLM SQL connection', line2Label: 'Mode', line2Value: 'Connected', status: 'Connected' },
+    { id: 'plm-sql-l3', title: 'PLMAccelerate SQL', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'PLMAccelerate SQL', line2Label: 'Mode', line2Value: 'Connected', status: 'Connected' },
     { id: 'empty-c', title: 'Choose source', subtitle: 'Empty slot', line1Label: 'Source', line1Value: 'Not selected', line2Label: 'Mode', line2Value: 'Waiting', status: 'Not connected' },
   ],
   'box-docs': [
@@ -271,7 +273,7 @@ export const sourceCardTemplates: Record<string, ConnectionCard[]> = {
   ],
   'sharepoint-docs': [
     { id: 'sp-doc-card', title: 'Sharepoint documentation', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'Sharepoint documentation', line2Label: 'Mode', line2Value: 'Connected', status: 'Connected' },
-    { id: 'plm-doc-card', title: 'PLM SQL connection', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'PLM SQL connection', line2Label: 'Mode', line2Value: 'Connecting', status: 'Connecting' },
+    { id: 'plm-doc-card', title: 'PLMAccelerate SQL', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'PLMAccelerate SQL', line2Label: 'Mode', line2Value: 'Connecting', status: 'Connecting' },
   ],
   'cost-rollup': [
     { id: 'mass-cost', title: 'Mass Production', subtitle: 'Selected source', line1Label: 'Source', line1Value: 'Mass Production', line2Label: 'Mode', line2Value: 'Connected', status: 'Connected' },

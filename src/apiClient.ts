@@ -100,6 +100,38 @@ export type SourcePreviewPayload = {
   rowLimit: number
 }
 
+export type PdfReviewSearchMode = 'file' | 'folder'
+
+export type PdfReviewSearchPayload = {
+  mode: PdfReviewSearchMode
+  path: string
+  query: string
+}
+
+export type PdfReviewSearchResult = {
+  mode: PdfReviewSearchMode
+  query: string
+  searchedAt: string
+  scannedDocuments: number
+  matchedDocuments: number
+  totalMatches: number
+  documents: Array<{
+    documentName: string
+    path: string
+    modelName: string
+    modelPath: string
+    matchCount: number
+    pageCount: number
+    status: 'Searched' | 'Error'
+    error: string | null
+    pages: Array<{
+      pageNumber: number
+      matchCount: number
+      snippets: string[]
+    }>
+  }>
+}
+
 export type DataContractPayload = {
   id: string
   targetId: string
@@ -509,6 +541,9 @@ export const apiFetchSourcePreview = (sourceId: string, sheetName?: string) => {
 
   return fetchJson<SourcePreviewPayload>(`/api/sources/${encodeURIComponent(sourceId)}/preview?${params.toString()}`)
 }
+
+export const apiSearchPdfReview = (payload: PdfReviewSearchPayload) =>
+  postJson<PdfReviewSearchResult>('/api/pdf-review/search', payload, { timeoutMs: 120000 })
 
 export const apiMarkIssueForDecision = (issueId: string) =>
   postJson<WorkflowPayload>('/api/workflow/mark-issue-for-decision', { issueId })

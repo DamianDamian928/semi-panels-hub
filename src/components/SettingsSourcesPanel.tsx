@@ -5,7 +5,6 @@ import { SourcesStep } from './steps/SourcesStep'
 type SettingsSourcesPanelProps = {
   sourceDefinitions: SourceDefinition[]
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
-  deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
   updateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
@@ -17,7 +16,6 @@ type SettingsSourcesPanelProps = {
 export function SettingsSourcesPanel({
   sourceDefinitions,
   createSource,
-  deleteSource,
   updateSourceConfiguration,
   registerSourceLocalFile,
   checkSourcesAccess,
@@ -34,7 +32,6 @@ export function SettingsSourcesPanel({
     sourcesAutoChecking,
     sourceSelectionError,
     handleCreateSource,
-    handleDeleteSource,
     handleUpdateSourceConfiguration,
     handleSourceFileSelection,
     handleSourceAccessCheck,
@@ -42,7 +39,6 @@ export function SettingsSourcesPanel({
     currentProcessStep: 'Sources',
     sourceDefinitions,
     createSource,
-    deleteSource,
     updateSourceConfiguration,
     registerSourceLocalFile,
     checkSourcesAccess,
@@ -50,7 +46,7 @@ export function SettingsSourcesPanel({
   })
 
   return (
-    <div className="app-shell">
+    <div className="app-shell sources-shell">
       <header className="page-header page-header-row">
         <div>
           <p className="eyebrow">Semi Panels Hub</p>
@@ -79,9 +75,6 @@ export function SettingsSourcesPanel({
           sourceSelectionError={sourceSelectionError}
           onAddSource={handleCreateSource}
           onUpdateSourceConfiguration={handleUpdateSourceConfiguration}
-          onRemoveSource={(sourceId) => {
-            void handleDeleteSource(sourceId)
-          }}
           onChooseSourceFile={(sourceId) => {
             void handleSourceFileSelection(sourceId)
           }}

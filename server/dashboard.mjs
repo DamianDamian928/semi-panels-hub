@@ -35,6 +35,17 @@ const normalizeForecastLookupValue = (value) => String(value ?? '').trim().toLow
 
 const normalizeForecastStatus = (value) => String(value ?? '').trim().toUpperCase()
 
+const normalizeDashboardComment = (value) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+
+const isDashboardRowMarkedForRemoval = (value) =>
+  normalizeDashboardComment(value).startsWith('do usuniecia')
+
 const forecastColumns = {
   wo: 'WO',
   intelPo: 'INTEL PO #',
@@ -52,6 +63,49 @@ const forecastOnlyDashboardColumns = new Set([
   forecastColumns.intelRtd,
   forecastColumns.watlowRtd,
 ])
+const commentsColumnAliases = ['Comments', 'Comment', 'Uwagi']
+const commentMatchedForecastModels = new Set([
+  'HTR-1.5-90-EL',
+  'HTR-1.5-7.94-ST',
+  'HTR-2.5-1.5-RED',
+  'CM-PID-01',
+  'CB-4HTR-SET',
+].map(normalizeForecastLookupValue))
+const matvarForecastValidationScopes = new Set(['part l1', 'part l2', 'full scope'])
+const matvarForecastValidationScopeLabel = 'Part L1, Part L2, Full Scope'
+
+const getReviewComments = (review) =>
+  getDashboardCellByName(review, 'Comments') ||
+  getDashboardCellByName(review, 'Comment') ||
+  getDashboardCellByName(review, 'Uwagi') ||
+  ''
+
+const getReviewSemiListMatvar = (review) =>
+  String(review?.semiListMatvar || getReviewItem(review) || '').trim()
+
+const isCommentMatchedForecastModel = (model) =>
+  commentMatchedForecastModels.has(normalizeForecastLookupValue(model))
+
+const getCommentValueCandidates = (comments) => {
+  const text = String(comments ?? '').trim()
+  if (!text) return []
+
+  return [...new Set([
+    text,
+    ...text.split(/[,;\r\n]+/),
+  ].map((value) => value.trim()).filter(Boolean))]
+}
+
+const getCommentMatchedForecastModels = (comments) =>
+  getCommentValueCandidates(comments).filter(isCommentMatchedForecastModel)
+
+const commentsMatchForecastModel = (comments, forecastModel) => {
+  const normalizedForecastModel = normalizeForecastLookupValue(forecastModel)
+  if (!normalizedForecastModel) return false
+
+  return getCommentValueCandidates(comments)
+    .some((candidate) => normalizeForecastLookupValue(candidate) === normalizedForecastModel)
+}
 
 const forecastModelMatchesReviewScope = (forecastModel, intelDescription) => {
   const model = normalizeForecastLookupValue(forecastModel)
@@ -84,8 +138,17 @@ const forecastRecordMatchesB24040400A003Alias = (record, intelDescription) => {
 
 const findForecastRecordsForReview = (review, forecastRecords) => {
   const intelDescription = getReviewIntelDescription(review)
-  const matvar = getReviewItem(review)
+  const matvar = getReviewSemiListMatvar(review)
   const normalizedMatvar = normalizeForecastLookupValue(matvar)
+  const comments = getReviewComments(review)
+
+  const commentModelMatches = forecastRecords.filter((record) =>
+    normalizedMatvar &&
+    isCommentMatchedForecastModel(record.model) &&
+    commentsMatchForecastModel(comments, record.model) &&
+    normalizeForecastLookupValue(record.mvar) === normalizedMatvar,
+  )
+  if (commentModelMatches.length) return commentModelMatches
 
   const matvarMatches = forecastRecords.filter((record) =>
     normalizedMatvar &&
@@ -100,6 +163,7 @@ const findForecastRecordsForReview = (review, forecastRecords) => {
   if (b24040400A003AliasMatches.length) return b24040400A003AliasMatches
 
   return forecastRecords.filter((record) =>
+    !isCommentMatchedForecastModel(record.model) &&
     forecastModelMatchesReviewExactly(record.model, intelDescription),
   )
 }
@@ -145,6 +209,8 @@ export const readDashboardRowsFromSource = async () => {
     contract.fields.intelDescription,
   ]
   const missingColumns = sourceDashboardColumns.filter((column) => !(column in columnIndexByName))
+  const commentsColumn = getColumnByAliases(worksheet.columns, commentsColumnAliases)
+  const commentsColumnIndex = commentsColumn ? columnIndexByName[commentsColumn] : -1
 
   if (missingColumns.length) {
     throw new SourcePolicyError(
@@ -154,7 +220,11 @@ export const readDashboardRowsFromSource = async () => {
   }
 
   const reviews = worksheet.rows
+    .filter((row) => !isDashboardRowMarkedForRemoval(
+      commentsColumnIndex >= 0 ? row[commentsColumnIndex] : '',
+    ))
     .map((row, index) => {
+      const comments = commentsColumnIndex >= 0 ? String(row[commentsColumnIndex] ?? '').trim() : ''
       const dashboardCells = Object.fromEntries(
         dashboardColumns.map((column) => {
           if (forecastOnlyDashboardColumns.has(column)) return [column, '']
@@ -167,7 +237,10 @@ export const readDashboardRowsFromSource = async () => {
           return [column, value]
         }),
       )
+      if (commentsColumn) dashboardCells[commentsColumn] = comments
+
       const intelModel = dashboardCells[contract.fields.item] || dashboardCells[contract.fields.intelDescription] || `dashboard-row-${index + 1}`
+      const semiListMatvar = dashboardCells[contract.fields.item] ?? ''
 
       return {
         id: `dashboard-${source.id}-${index + 1}`,
@@ -175,6 +248,8 @@ export const readDashboardRowsFromSource = async () => {
         status: 'Draft',
         owner: 'Unassigned',
         lastUpdated: source.sourceFile?.modifiedAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+        forecastMatvar: '',
+        semiListMatvar,
         dashboardColumns,
         dashboardCells,
       }
@@ -202,10 +277,12 @@ export const readDashboardRowsFromSource = async () => {
       return {
         ...review,
         id: `${review.id}-forecast-${forecastData.sourceIndex + 1}-${index + 1}`,
-        forecastStatus: forecastData.forecastStatus || undefined,
-        dashboardCells,
-        poDocuments: findPoDocumentsForValue(dashboardCells[contract.fields.intelPo], poDocumentsByPoNumber),
-      }
+          forecastStatus: forecastData.forecastStatus || undefined,
+          forecastMatvar: forecastData.forecastMatvar,
+          semiListMatvar: forecastData.semiListMatvar ?? review.semiListMatvar,
+          dashboardCells,
+          poDocuments: findPoDocumentsForValue(dashboardCells[contract.fields.intelPo], poDocumentsByPoNumber),
+        }
     })
   })
 
@@ -282,10 +359,14 @@ const readForecastDataByReview = async (reviews) => {
           forecastRecord,
           getReviewIntelDescription(review),
         )
+        const useCommentsModel = isCommentMatchedForecastModel(forecastRecord.model) &&
+          commentsMatchForecastModel(getReviewComments(review), forecastRecord.model)
 
         return {
           sourceIndex: forecastRecord.sourceIndex,
           forecastStatus: forecastRecord.status,
+          forecastMatvar: forecastRecord.mvar,
+          semiListMatvar: useCommentsModel ? getReviewSemiListMatvar(review) : undefined,
           dashboardCells: {
             [forecastColumns.wo]: forecastRecord.wo,
             [forecastColumns.intelPo]: forecastRecord.intelPo,
@@ -321,7 +402,7 @@ const readMatvarForecastValidationStatus = async () => {
     const dashboardColumnIndexByName = Object.fromEntries(
       dashboardWorksheet.columns.map((column, index) => [column, index]),
     )
-    const dashboardMissingColumns = [contract.fields.intelDescription, contract.fields.item]
+    const dashboardMissingColumns = [contract.fields.intelDescription, contract.fields.item, contract.fields.scope]
       .filter((column) => !(column in dashboardColumnIndexByName))
 
     if (dashboardMissingColumns.length) {
@@ -333,6 +414,7 @@ const readMatvarForecastValidationStatus = async () => {
 
     const forecastModelColumn = getColumnByAliases(forecastWorksheet.columns, ['INTEL MODEL NUMBER ITEM'])
     const forecastMvarColumn = getColumnByAliases(forecastWorksheet.columns, ['MVAR'])
+    const dashboardCommentsColumn = getColumnByAliases(dashboardWorksheet.columns, commentsColumnAliases)
 
     if (!forecastModelColumn || !forecastMvarColumn) {
       throw new SourcePolicyError(
@@ -343,11 +425,11 @@ const readMatvarForecastValidationStatus = async () => {
 
     const dashboardIntelDescriptionIndex = dashboardColumnIndexByName[contract.fields.intelDescription]
     const dashboardItemIndex = dashboardColumnIndexByName[contract.fields.item]
+    const dashboardScopeIndex = dashboardColumnIndexByName[contract.fields.scope]
+    const dashboardCommentsIndex = dashboardCommentsColumn ? dashboardColumnIndexByName[dashboardCommentsColumn] : -1
     const validMvarsByModel = new Map()
 
-    dashboardWorksheet.rows.forEach((row) => {
-      const model = String(row[dashboardIntelDescriptionIndex] ?? '').trim()
-      const mvar = String(row[dashboardItemIndex] ?? '').trim()
+    const addValidMvarForModel = (model, mvar) => {
       const modelKey = normalizeForecastLookupValue(model)
       const mvarKey = normalizeForecastLookupValue(mvar)
 
@@ -356,6 +438,27 @@ const readMatvarForecastValidationStatus = async () => {
       const existing = validMvarsByModel.get(modelKey) ?? new Map()
       existing.set(mvarKey, mvar)
       validMvarsByModel.set(modelKey, existing)
+    }
+
+    dashboardWorksheet.rows.forEach((row) => {
+      const scopeKey = normalizeForecastLookupValue(row[dashboardScopeIndex])
+      if (!matvarForecastValidationScopes.has(scopeKey)) return
+
+      const model = String(row[dashboardIntelDescriptionIndex] ?? '').trim()
+      const mvar = String(row[dashboardItemIndex] ?? '').trim()
+      const modelKey = normalizeForecastLookupValue(model)
+      const mvarKey = normalizeForecastLookupValue(mvar)
+
+      if (!modelKey || !mvarKey) return
+
+      if (!isCommentMatchedForecastModel(model)) {
+        addValidMvarForModel(model, mvar)
+      }
+
+      if (dashboardCommentsIndex >= 0) {
+        getCommentMatchedForecastModels(row[dashboardCommentsIndex])
+          .forEach((commentModel) => addValidMvarForModel(commentModel, mvar))
+      }
     })
 
     const forecastModelColumnIndex = forecastWorksheet.columns.findIndex((column) => column === forecastModelColumn)
@@ -371,22 +474,15 @@ const readMatvarForecastValidationStatus = async () => {
           forecastMvar,
         }
       })
-      .filter((record) => record.intelModelNumberItem || record.forecastMvar)
+      .filter((record) => {
+        const modelKey = normalizeForecastLookupValue(record.intelModelNumberItem)
+        return modelKey && validMvarsByModel.has(modelKey)
+      })
 
     const issues = checkedRecords.flatMap((record, index) => {
       const modelKey = normalizeForecastLookupValue(record.intelModelNumberItem)
       const mvarKey = normalizeForecastLookupValue(record.forecastMvar)
-
-      if (!modelKey) {
-        return [{
-          id: `forecast-matvar-${index + 1}`,
-          rowNumber: record.rowNumber,
-          intelModelNumberItem: record.intelModelNumberItem,
-          forecastMvar: record.forecastMvar,
-          expectedMvar: null,
-          issue: 'Forecast row has MVAR but no INTEL MODEL NUMBER ITEM.',
-        }]
-      }
+      const validMvars = validMvarsByModel.get(modelKey)
 
       if (!mvarKey) {
         return [{
@@ -399,19 +495,7 @@ const readMatvarForecastValidationStatus = async () => {
         }]
       }
 
-      const validMvars = validMvarsByModel.get(modelKey)
-      if (!validMvars) {
-        return [{
-          id: `forecast-matvar-${index + 1}`,
-          rowNumber: record.rowNumber,
-          intelModelNumberItem: record.intelModelNumberItem,
-          forecastMvar: record.forecastMvar,
-          expectedMvar: null,
-          issue: 'INTEL MODEL NUMBER ITEM does not exist in Semi Panels List.',
-        }]
-      }
-
-      if (!validMvars.has(mvarKey)) {
+      if (validMvars && !validMvars.has(mvarKey)) {
         return [{
           id: `forecast-matvar-${index + 1}`,
           rowNumber: record.rowNumber,
@@ -431,8 +515,8 @@ const readMatvarForecastValidationStatus = async () => {
       issueCount: issues.length,
       issues,
       message: issues.length
-        ? `${issues.length} Forecast row(s) have mismatched INTEL MODEL NUMBER ITEM / MVAR pairs.`
-        : 'Forecast INTEL MODEL NUMBER ITEM / MVAR pairs match Semi Panels List.',
+        ? `${issues.length} Forecast row(s) have mismatched INTEL MODEL NUMBER ITEM / MVAR pairs for Scope: ${matvarForecastValidationScopeLabel}.`
+        : `Forecast INTEL MODEL NUMBER ITEM / MVAR pairs match Semi Panels List for Scope: ${matvarForecastValidationScopeLabel}.`,
       refreshedAt: new Date().toISOString(),
     }
   } catch (error) {

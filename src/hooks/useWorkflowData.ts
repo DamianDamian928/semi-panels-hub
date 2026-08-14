@@ -4,7 +4,6 @@ import {
   apiCheckSourceAccess,
   apiCheckSourcesAccess,
   apiCreateSource,
-  apiDeleteSource,
   apiMarkIssueForDecision,
   apiPrepareOutput,
   apiRegisterSourceLocalFile,
@@ -224,20 +223,6 @@ export const useWorkflowData = () => {
     }
   }
 
-  const deleteSource = async (sourceId: string): Promise<SourceDefinition[]> => {
-    try {
-      const data = await apiDeleteSource(sourceId)
-      applyBootstrapPayload(data)
-      setApiConnectionState('ready')
-      setApiConnectionError(null)
-      return data.sources
-    } catch (error: unknown) {
-      setApiConnectionState(getApiFailureState(error))
-      setApiConnectionError(getApiFailureMessage(error, 'Source could not be removed.'))
-      throw error
-    }
-  }
-
   const updateSourceConfiguration = async (
     sourceId: string,
     configuration: SourceConfigurationInput,
@@ -410,7 +395,6 @@ export const useWorkflowData = () => {
     matvarForecastValidationStatus,
     refreshBootstrapData,
     createSource,
-    deleteSource,
     updateSourceConfiguration,
     registerSourceLocalFile,
     checkSourcesAccess,

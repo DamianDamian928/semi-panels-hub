@@ -3,10 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readExcelPreview } from './excelPreview.mjs'
+import { searchPdfReviewDocuments } from './pdfReview.mjs'
 import { workflowActions } from './workflowActions.mjs'
 import { workflowRepository } from './workflowRepository.mjs'
 import { buildBomMatvarComparison, buildBomMatvarReviewIssues, buildBomMatvarValidation } from './bomMatvar.mjs'
 import { buildBootstrapPayload, ensureDashboardSourceFresh, getLiveReview, readDashboardRowsFromSource } from './dashboard.mjs'
+import { getActiveFusionBom } from './fusionBomApi.mjs'
 import { corsHeaders, readJsonBody, sendJson, sendJsonBodyError } from './http.mjs'
 import {
   SourcePolicyError,
@@ -57,6 +59,32 @@ export const createRequestHandler = ({ host, port }) => async (request, response
   if (routeKey === 'GET /api/reviews') {
     const { reviews } = await readDashboardRowsFromSource()
     sendJson(response, 200, reviews)
+    return
+  }
+
+  if (routeKey === 'GET /api/fusion-bom') {
+    const partNumber = url.searchParams.get('partNumber')?.trim()
+
+    if (!partNumber) {
+      sendJson(response, 400, { error: 'partNumber query parameter is required.' })
+      return
+    }
+
+    const bom = await getActiveFusionBom(partNumber, {
+      includeExpired: url.searchParams.get('includeExpired') === 'true',
+    })
+
+    sendJson(response, 200, {
+      ...bom,
+      generatedAt: new Date().toISOString(),
+      source: {
+        authentication: 'X-Api-Key',
+        location: 'https://plmutility.watlow.com / Fusion BOM',
+        name: 'Fusion BOM API',
+        status: 'Ready',
+        type: 'API connection',
+      },
+    })
     return
   }
 
@@ -193,6 +221,41 @@ export const createRequestHandler = ({ host, port }) => async (request, response
 
     workflowRepository.saveSourceConnections(body.connectionsByTarget)
     sendJson(response, 200, await buildBootstrapPayload())
+    return
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/pdf-review/search') {
+    let body
+
+    try {
+      body = await readJsonBody(request)
+    } catch (error) {
+      sendJsonBodyError(response, error)
+      return
+    }
+
+    if (
+      !body ||
+      (body.mode !== 'file' && body.mode !== 'folder') ||
+      typeof body.path !== 'string' ||
+      typeof body.query !== 'string'
+    ) {
+      sendJson(response, 400, { error: 'Invalid PDF review search payload.' })
+      return
+    }
+
+    try {
+      sendJson(response, 200, await searchPdfReviewDocuments({
+        mode: body.mode,
+        path: body.path,
+        query: body.query,
+      }))
+    } catch (error) {
+      sendJson(response, 400, {
+        error: error instanceof Error ? error.message : 'PDF review search could not be completed.',
+      })
+    }
+
     return
   }
 

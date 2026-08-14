@@ -21,18 +21,18 @@ type SourcesStepProps = {
   sourceSelectionError: string | null
   onAddSource: (source: SourceCreateInput) => Promise<void>
   onUpdateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<void>
-  onRemoveSource: (sourceId: string) => void
   onChooseSourceFile: (sourceId: string) => void
   onTestSourceAccess: (sourceId: string) => void
 }
 
 const localPathSourceTypes = new Set<SourceDefinition['type']>(['File', 'Folder', 'Manual export'])
-const sourceTypeOptions: SourceType[] = ['File', 'Folder', 'SQL', 'SharePoint', 'Manual export']
+const sourceTypeOptions: SourceType[] = ['File', 'Folder', 'SQL', 'API', 'SharePoint', 'Manual export']
 
 const defaultExpectedFormatByType: Record<SourceType, string> = {
   File: 'Excel workbook or CSV export',
   Folder: 'Folder with PDF and drawing references',
   SQL: 'SQL connection profile',
+  API: 'Read-only HTTP API',
   SharePoint: 'SharePoint folder or document library',
   'Manual export': 'Manual export file',
 }
@@ -65,6 +65,7 @@ const sourceTypeFallbackLabel: Record<SourceType, string> = {
   File: 'Local file',
   Folder: 'Folder',
   SQL: 'SQL connection',
+  API: 'API connection',
   SharePoint: 'SharePoint location',
   'Manual export': 'Manual export',
 }
@@ -126,7 +127,6 @@ export function SourcesStep({
   sourceSelectionError,
   onAddSource,
   onUpdateSourceConfiguration,
-  onRemoveSource,
   onChooseSourceFile,
   onTestSourceAccess,
 }: SourcesStepProps) {
@@ -152,6 +152,11 @@ export function SourcesStep({
   const isCheckingSelectedSource = selectedSource ? sourceAccessPendingId === selectedSource.id : false
   const selectedAccessCheck = selectedSource?.accessCheck
   const isSelectedSourceError = selectedSource?.status === 'Error' || selectedAccessCheck?.status === 'Error'
+  const selectedConnectionTestFeedback = (selectedSource?.type === 'SQL' || selectedSource?.type === 'API') && selectedAccessCheck
+    ? selectedAccessCheck.readable
+      ? `${selectedSource.type} test passed at ${formatFileModifiedAt(selectedAccessCheck.checkedAt)}.`
+      : `${selectedSource.type} test did not pass: ${selectedAccessCheck.message}`
+    : null
 
   useEffect(() => {
     setSourceConfigurationDraft(createSourceConfigurationDraft(selectedSource))
@@ -565,24 +570,36 @@ export function SourcesStep({
 
                 {sourceSelectionError ? <p className="source-selection-error">{sourceSelectionError}</p> : null}
                 {sourceOpenLocationError ? <p className="source-selection-error">{sourceOpenLocationError}</p> : null}
+                {selectedConnectionTestFeedback ? (
+                  <p className={selectedAccessCheck?.readable ? 'source-selection-success' : 'source-selection-error'}>
+                    {selectedConnectionTestFeedback}
+                  </p>
+                ) : null}
 
                 <div className="source-detail-actions">
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={!canChooseLocalPath || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId) || sourceMutationPending}
-                    onClick={() => onChooseSourceFile(selectedSource.id)}
-                  >
-                    {getLocalPathActionLabel(selectedSource, isSelectingSource)}
-                  </button>
-                  <button
-                    type="button"
-                    className="source-remove-button"
-                    disabled={sourceMutationPending || Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId)}
-                    onClick={() => onRemoveSource(selectedSource.id)}
-                  >
-                    {sourceMutationPending ? 'Removing...' : 'Remove source'}
-                  </button>
+                  {canChooseLocalPath ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={Boolean(sourceSelectionPendingId) || Boolean(sourceAccessPendingId) || sourceMutationPending}
+                      onClick={() => onChooseSourceFile(selectedSource.id)}
+                    >
+                      {getLocalPathActionLabel(selectedSource, isSelectingSource)}
+                    </button>
+                  ) : selectedSource.type === 'SQL' || selectedSource.type === 'API' ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={Boolean(sourceAccessPendingId) || Boolean(sourceSelectionPendingId) || sourceMutationPending}
+                      onClick={() => onTestSourceAccess(selectedSource.id)}
+                    >
+                      {isCheckingSelectedSource
+                        ? 'Testing...'
+                        : selectedSource.status === 'Ready'
+                          ? `Retest ${selectedSource.type} connection`
+                          : `Test ${selectedSource.type} connection`}
+                    </button>
+                  ) : null}
                 </div>
               </>
               )

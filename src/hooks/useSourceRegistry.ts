@@ -13,7 +13,6 @@ type UseSourceRegistryOptions = {
   currentProcessStep: ProcessStep
   sourceDefinitions: SourceDefinition[]
   createSource: (source: SourceCreateInput) => Promise<SourceDefinition[]>
-  deleteSource: (sourceId: string) => Promise<SourceDefinition[]>
   updateSourceConfiguration: (sourceId: string, configuration: SourceConfigurationInput) => Promise<SourceDefinition[]>
   registerSourceLocalFile: (sourceId: string, file: SourceFileMetadata) => Promise<void>
   checkSourcesAccess: () => Promise<void>
@@ -24,7 +23,6 @@ export const useSourceRegistry = ({
   currentProcessStep,
   sourceDefinitions,
   createSource,
-  deleteSource,
   updateSourceConfiguration,
   registerSourceLocalFile,
   checkSourcesAccess,
@@ -131,30 +129,6 @@ export const useSourceRegistry = ({
     }
   }
 
-  const handleDeleteSource = async (sourceId: string) => {
-    const source = sourceDefinitions.find((item) => item.id === sourceId)
-    if (!source) return
-
-    const confirmed = window.confirm(`Remove source "${source.name}" from the registry? This will not delete any files.`)
-    if (!confirmed) return
-
-    setSourceMutationPending(true)
-    setSourceSelectionError(null)
-
-    try {
-      const nextSources = await deleteSource(sourceId)
-      setActiveSourceId(nextSources[0]?.id ?? '')
-    } catch (error) {
-      setSourceSelectionError(
-        error instanceof Error
-          ? error.message
-          : 'Could not remove this source.',
-      )
-    } finally {
-      setSourceMutationPending(false)
-    }
-  }
-
   const handleUpdateSourceConfiguration = async (sourceId: string, configuration: SourceConfigurationInput) => {
     setSourceMutationPending(true)
     setSourceSelectionError(null)
@@ -182,7 +156,6 @@ export const useSourceRegistry = ({
     sourcesAutoChecking,
     sourceSelectionError,
     handleCreateSource,
-    handleDeleteSource,
     handleUpdateSourceConfiguration,
     handleSourceFileSelection,
     handleSourceAccessCheck,
